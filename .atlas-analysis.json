@@ -1,0 +1,149 @@
+{
+  "projectType": "api-service",
+  "projectName": "CLI Proxy API",
+  "projectDescription": "A proxy server that provides OpenAI/Gemini/Claude/Codex compatible API interfaces for CLI models with OAuth support and multi-account load balancing",
+  "theme": "aspen",
+  "primaryColor": "#6366F1",
+  "lightColor": "#818CF8",
+  "darkColor": "#4F46E5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/authentication",
+              "concepts/providers",
+              "concepts/routing"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/server",
+              "configuration/api-keys",
+              "configuration/oauth-providers",
+              "configuration/model-mappings",
+              "configuration/advanced"
+            ]
+          },
+          {
+            "group": "OAuth Authentication",
+            "pages": [
+              "oauth/gemini",
+              "oauth/claude",
+              "oauth/codex",
+              "oauth/qwen",
+              "oauth/antigravity",
+              "oauth/iflow"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/amp-cli",
+              "integrations/cursor",
+              "integrations/cline",
+              "integrations/openrouter"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/cloud",
+              "deployment/storage-backends"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "Go SDK",
+            "pages": [
+              "sdk/overview",
+              "sdk/getting-started",
+              "sdk/embedding",
+              "sdk/advanced",
+              "sdk/access",
+              "sdk/watcher"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "sdk/examples/custom-provider",
+              "sdk/examples/http-request",
+              "sdk/examples/translator"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "OpenAI Compatible",
+            "pages": [
+              "api/openai/chat",
+              "api/openai/models",
+              "api/openai/streaming"
+            ]
+          },
+          {
+            "group": "Management API",
+            "pages": [
+              "api/management/overview",
+              "api/management/config",
+              "api/management/oauth",
+              "api/management/quota",
+              "api/management/logs"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "OpenAI/Gemini/Claude/Codex compatible API endpoints",
+    "Multi-provider OAuth authentication (Gemini, Claude, OpenAI, Qwen, iFlow, Antigravity)",
+    "Multi-account load balancing with round-robin and fill-first strategies",
+    "Model aliasing and custom mappings",
+    "Streaming and non-streaming responses with function calling support",
+    "Management API for runtime configuration and monitoring",
+    "Reusable Go SDK for embedding the proxy",
+    "Amp CLI integration with provider routing"
+  ],
+  "publicApiSurface": [
+    "/v1/chat/completions - OpenAI-compatible chat endpoint",
+    "/v1/models - List available models",
+    "/v1/ws - WebSocket API for real-time streaming",
+    "/v0/management/config - Get/update configuration",
+    "/v0/management/oauth/callback - OAuth callback handler",
+    "/v0/management/quota - Query quota information",
+    "/v0/management/logs - Access server logs",
+    "/api/provider/{provider}/v1/* - Amp CLI provider routes",
+    "sdk/cliproxy.NewBuilder() - Go SDK entry point",
+    "sdk/auth.Manager - Core authentication manager"
+  ]
+}
