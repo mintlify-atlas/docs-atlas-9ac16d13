@@ -1,0 +1,470 @@
+---
+title: 'OpenRouter and OpenAI-Compatible Providers'
+description: 'Add custom OpenAI-compatible providers like OpenRouter, Groq, DeepSeek, and more'
+---
+
+## Overview
+
+CLI Proxy API supports adding custom OpenAI-compatible providers through the `openai-compatibility` configuration. This allows you to integrate third-party services like OpenRouter, Groq, DeepSeek, Together AI, or any other service that implements the OpenAI API format.
+
+## Basic Configuration
+
+Add providers to your `config.yaml` under the `openai-compatibility` section:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"                         # Provider name for identification
+    base-url: "https://openrouter.ai/api/v1"  # API endpoint
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"           # Your API key
+    models:
+      - name: "anthropic/claude-3.5-sonnet"   # Upstream model name
+        alias: "openrouter-claude"             # Client-visible alias
+```
+
+## Configuration Examples
+
+### OpenRouter
+
+OpenRouter provides access to multiple AI models through a single API:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      # Free models
+      - name: "moonshotai/kimi-k2:free"
+        alias: "kimi-k2"
+      
+      # Premium models with aliases
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "openrouter-claude"
+      - name: "openai/gpt-4-turbo"
+        alias: "openrouter-gpt4"
+```
+
+### Groq
+
+Groq provides ultra-fast inference for open-source models:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "groq"
+    base-url: "https://api.groq.com/openai/v1"
+    api-key-entries:
+      - api-key: "gsk_..."
+    models:
+      - name: "llama-3.3-70b-versatile"
+        alias: "groq-llama"
+      - name: "mixtral-8x7b-32768"
+        alias: "groq-mixtral"
+```
+
+### DeepSeek
+
+DeepSeek offers competitive pricing for coding models:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "deepseek"
+    base-url: "https://api.deepseek.com/v1"
+    api-key-entries:
+      - api-key: "sk-..."
+    models:
+      - name: "deepseek-coder"
+        alias: "deepseek-code"
+      - name: "deepseek-chat"
+        alias: "deepseek-chat"
+```
+
+### Together AI
+
+Together AI provides access to open-source models:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "together"
+    base-url: "https://api.together.xyz/v1"
+    api-key-entries:
+      - api-key: "..."
+    models:
+      - name: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+        alias: "llama-70b"
+      - name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+        alias: "mixtral"
+```
+
+## Advanced Configuration
+
+### Multiple API Keys
+
+Configure multiple API keys for load balancing:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+      - api-key: "sk-or-v1-...b781"
+      - api-key: "sk-or-v1-...b782"
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "openrouter-claude"
+```
+
+CLI Proxy API will automatically distribute requests across these keys using round-robin load balancing.
+
+### Per-Key Proxy Settings
+
+Route specific API keys through different proxies:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+        proxy-url: "socks5://proxy1.example.com:1080"
+      - api-key: "sk-or-v1-...b781"
+        proxy-url: "socks5://proxy2.example.com:1080"
+      - api-key: "sk-or-v1-...b782"
+        # This key uses global proxy or no proxy
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "openrouter-claude"
+```
+
+### Custom Headers
+
+Add custom headers for provider-specific requirements:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    headers:
+      HTTP-Referer: "https://myapp.com"
+      X-Title: "My Application"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "openrouter-claude"
+```
+
+### Model Prefixes
+
+Use prefixes to organize providers:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    prefix: "or"                              # Require "or/" prefix
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "claude-sonnet"                # Accessed as "or/claude-sonnet"
+```
+
+Clients must now use the prefix:
+
+```bash
+curl http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "or/claude-sonnet",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Model Pools
+
+Create internal model pools for automatic failover:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      # Multiple upstream models with the same alias
+      # Creates a pool that round-robins and fails over automatically
+      - name: "qwen3.5-plus"
+        alias: "smart-model"
+      - name: "glm-5"
+        alias: "smart-model"
+      - name: "kimi-k2.5"
+        alias: "smart-model"
+```
+
+When clients request `smart-model`, CLI Proxy API will:
+1. Round-robin between the three upstream models
+2. Automatically failover if one model fails before producing output
+3. Expose only one model name (`smart-model`) to clients
+
+### Excluding Models
+
+Exclude specific models from being exposed:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "claude-sonnet"
+    excluded-models:
+      - "gpt-3.5-turbo"              # Exclude specific model
+      - "gpt-4-*"                    # Wildcard: exclude all gpt-4 variants
+      - "*-vision"                   # Wildcard: exclude all vision models
+      - "*embedding*"                # Wildcard: exclude embedding models
+```
+
+## Integration Examples
+
+### Using with Cursor
+
+<Steps>
+  <Step title="Configure Provider">
+    Add OpenRouter to your `config.yaml`:
+    
+    ```yaml config.yaml
+    openai-compatibility:
+      - name: "openrouter"
+        base-url: "https://openrouter.ai/api/v1"
+        api-key-entries:
+          - api-key: "sk-or-v1-..."
+        models:
+          - name: "anthropic/claude-3.5-sonnet"
+            alias: "openrouter-claude"
+    ```
+  </Step>
+  
+  <Step title="Configure Cursor">
+    In Cursor settings:
+    
+    - Base URL: `http://localhost:8317/v1`
+    - API Key: `your-api-key-1` (from CLI Proxy API config)
+    - Model: `openrouter-claude`
+  </Step>
+</Steps>
+
+### Using with Cline
+
+<Steps>
+  <Step title="Configure Provider">
+    Add Groq to your `config.yaml`:
+    
+    ```yaml config.yaml
+    openai-compatibility:
+      - name: "groq"
+        base-url: "https://api.groq.com/openai/v1"
+        api-key-entries:
+          - api-key: "gsk_..."
+        models:
+          - name: "llama-3.3-70b-versatile"
+            alias: "groq-llama"
+    ```
+  </Step>
+  
+  <Step title="Configure Cline">
+    In Cline settings:
+    
+    ```json settings.json
+    {
+      "cline.apiProvider": "openai-compatible",
+      "cline.baseUrl": "http://localhost:8317/v1",
+      "cline.apiKey": "your-api-key-1",
+      "cline.model": "groq-llama"
+    }
+    ```
+  </Step>
+</Steps>
+
+### Using with curl
+
+```bash
+curl http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openrouter-claude",
+    "messages": [
+      {"role": "user", "content": "Write a hello world function in Python"}
+    ]
+  }'
+```
+
+## Model Discovery
+
+List available models including custom providers:
+
+```bash
+curl -H "Authorization: Bearer your-api-key-1" \
+  http://localhost:8317/v1/models
+```
+
+Response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemini-2.5-pro",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "gemini-cli"
+    },
+    {
+      "id": "openrouter-claude",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "openrouter"
+    },
+    {
+      "id": "groq-llama",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "groq"
+    }
+  ]
+}
+```
+
+## Management API
+
+The Management API provides endpoints to manage OpenAI-compatible providers dynamically:
+
+### List Providers
+
+```bash
+curl -H "Authorization: Bearer management-key" \
+  http://localhost:8317/v0/management/openai-compatibility
+```
+
+### Add Provider
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer management-key" \
+  -H "Content-Type: application/json" \
+  http://localhost:8317/v0/management/openai-compatibility \
+  -d '{
+    "openai-compatibility": [
+      {
+        "name": "openrouter",
+        "base-url": "https://openrouter.ai/api/v1",
+        "api-key-entries": [
+          {"api-key": "sk-or-v1-..."}
+        ],
+        "models": [
+          {"name": "anthropic/claude-3.5-sonnet", "alias": "openrouter-claude"}
+        ]
+      }
+    ]
+  }'
+```
+
+### Update Provider
+
+```bash
+curl -X PATCH \
+  -H "Authorization: Bearer management-key" \
+  -H "Content-Type: application/json" \
+  http://localhost:8317/v0/management/openai-compatibility \
+  -d '{
+    "name": "openrouter",
+    "models": [
+      {"name": "anthropic/claude-3.5-sonnet", "alias": "claude-sonnet"},
+      {"name": "openai/gpt-4-turbo", "alias": "gpt4-turbo"}
+    ]
+  }'
+```
+
+### Delete Provider
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer management-key" \
+  -H "Content-Type: application/json" \
+  http://localhost:8317/v0/management/openai-compatibility \
+  -d '{
+    "name": "openrouter"
+  }'
+```
+
+## Troubleshooting
+
+### Provider Connection Failed
+
+If requests to your custom provider fail:
+
+1. Verify the `base-url` is correct
+2. Test the upstream API directly:
+   
+   ```bash
+   curl https://openrouter.ai/api/v1/models \
+     -H "Authorization: Bearer sk-or-v1-..."
+   ```
+
+3. Check for network/firewall issues
+4. Verify the API key is valid
+
+### Model Not Available
+
+If a model doesn't appear in the model list:
+
+1. Check the `models` configuration
+2. Verify the upstream model name is correct
+3. Ensure no `excluded-models` patterns are matching
+4. Restart CLI Proxy API if you just added the provider
+
+### Authentication Errors
+
+If you see authentication errors:
+
+1. Verify the API key in `api-key-entries` is valid
+2. Check if the provider requires specific headers (add them under `headers`)
+3. Some providers need API keys in custom header formats
+
+### Rate Limiting
+
+If you hit rate limits:
+
+1. Add multiple API keys in `api-key-entries`
+2. Configure request retry settings:
+   
+   ```yaml config.yaml
+   request-retry: 3
+   max-retry-credentials: 3
+   max-retry-interval: 30
+   ```
+
+## Best Practices
+
+1. **Use descriptive aliases** for easy model identification
+2. **Configure multiple API keys** for load balancing and redundancy
+3. **Set up model pools** for automatic failover between similar models
+4. **Use prefixes** to organize different provider groups
+5. **Monitor costs** by checking provider dashboards regularly
+6. **Enable debug logging** during initial setup: `debug: true`
+7. **Test providers** before production use with curl or similar tools
+8. **Document model capabilities** for your team (context length, pricing, etc.)
+
+## See Also
+
+- [Cursor Integration](/integrations/cursor) - Use custom providers with Cursor
+- [Cline Integration](/integrations/cline) - Use custom providers with Cline
+- [Amp CLI Integration](/integrations/amp-cli) - Advanced model routing
+- [Management API](/api/management/overview) - Dynamically manage providers

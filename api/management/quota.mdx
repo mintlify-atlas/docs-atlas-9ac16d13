@@ -1,0 +1,373 @@
+---
+title: Quota Management Endpoints
+description: Configure quota exceeded behavior and automatic failover
+---
+
+The quota management endpoints control how CLI Proxy API responds when provider quotas are exceeded.
+
+## Quota Exceeded Behavior
+
+When a provider returns a quota exceeded error, CLI Proxy API can automatically:
+
+1. **Switch Project**: Try another project/credential for the same provider
+2. **Switch Preview Model**: Fall back to preview/alternative model variants
+
+These settings allow uninterrupted service when quotas are hit.
+
+## Get Project Switching
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/quota-exceeded/switch-project`
+</ParamField>
+
+Returns whether automatic project switching is enabled.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/quota-exceeded/switch-project
+```
+
+### Response
+
+<ResponseField name="switch-project" type="boolean">
+  Whether to automatically switch to another project when quota is exceeded
+</ResponseField>
+
+```json
+{
+  "switch-project": true
+}
+```
+
+## Update Project Switching
+
+<ParamField path="PUT" type="endpoint">
+  `/v0/management/quota-exceeded/switch-project`
+</ParamField>
+
+<ParamField path="PATCH" type="endpoint">
+  `/v0/management/quota-exceeded/switch-project`
+</ParamField>
+
+Enable or disable automatic project switching.
+
+### Request
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-project
+```
+
+### Request Body
+
+<ParamField name="value" type="boolean" required>
+  Enable (true) or disable (false) project switching
+</ParamField>
+
+```json
+{
+  "value": true
+}
+```
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of update operation
+</ResponseField>
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Get Preview Model Switching
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/quota-exceeded/switch-preview-model`
+</ParamField>
+
+Returns whether automatic preview model switching is enabled.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/quota-exceeded/switch-preview-model
+```
+
+### Response
+
+<ResponseField name="switch-preview-model" type="boolean">
+  Whether to automatically switch to preview model when quota is exceeded
+</ResponseField>
+
+```json
+{
+  "switch-preview-model": true
+}
+```
+
+## Update Preview Model Switching
+
+<ParamField path="PUT" type="endpoint">
+  `/v0/management/quota-exceeded/switch-preview-model`
+</ParamField>
+
+<ParamField path="PATCH" type="endpoint">
+  `/v0/management/quota-exceeded/switch-preview-model`
+</ParamField>
+
+Enable or disable automatic preview model switching.
+
+### Request
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": false}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-preview-model
+```
+
+### Request Body
+
+<ParamField name="value" type="boolean" required>
+  Enable (true) or disable (false) preview model switching
+</ParamField>
+
+```json
+{
+  "value": false
+}
+```
+
+### Response
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Configuration File
+
+These settings correspond to the `quota-exceeded` section in `config.yaml`:
+
+```yaml
+quota-exceeded:
+  # Automatically switch to another project when quota exceeded
+  switch-project: true
+  
+  # Automatically switch to preview model when quota exceeded
+  switch-preview-model: true
+```
+
+## How Project Switching Works
+
+When enabled and a quota exceeded error occurs:
+
+1. Request fails with quota error from provider
+2. CLI Proxy API identifies other credentials for the same provider
+3. Request is retried with the next available credential
+4. Process continues until success or all credentials exhausted
+
+### Example Scenario
+
+**Configuration**:
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy...01"  # Project A
+  - api-key: "AIzaSy...02"  # Project B
+  - api-key: "AIzaSy...03"  # Project C
+
+quota-exceeded:
+  switch-project: true
+```
+
+**Flow**:
+1. Request uses Project A → Quota exceeded
+2. Automatically retry with Project B → Success
+3. Client receives response without error
+
+## How Preview Model Switching Works
+
+When enabled and a quota exceeded error occurs:
+
+1. Request fails with quota error for specific model
+2. CLI Proxy API checks for preview/alternative variants:
+   - `gemini-2.5-pro` → `gemini-2.5-pro-preview`
+   - `gemini-3-pro` → `gemini-3-pro-preview`
+3. Request is retried with preview model
+4. Original model name is restored in response
+
+### Example Scenario
+
+**Request**:
+```json
+{
+  "model": "gemini-2.5-pro",
+  "messages": [...]  
+}
+```
+
+**Flow**:
+1. Request for `gemini-2.5-pro` → Quota exceeded
+2. Automatically retry with `gemini-2.5-pro-preview` → Success
+3. Response shows `"model": "gemini-2.5-pro"` (original)
+
+## Combined Behavior
+
+Both settings can be enabled simultaneously for maximum availability:
+
+```bash
+# Enable both features
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-project
+
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-preview-model
+```
+
+**Retry Order**:
+1. Try Project A with `model-name`
+2. Try Project A with `model-name-preview` (if enabled)
+3. Try Project B with `model-name` (if enabled)
+4. Try Project B with `model-name-preview` (if both enabled)
+5. Continue until success or all options exhausted
+
+## Disable All Quota Handling
+
+To return quota errors immediately to clients:
+
+```bash
+# Disable project switching
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": false}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-project
+
+# Disable preview model switching  
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": false}' \
+  http://localhost:8317/v0/management/quota-exceeded/switch-preview-model
+```
+
+## Get Current Settings
+
+Retrieve both settings in a single call using the main config endpoint:
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/config | jq '."quota-exceeded"'
+```
+
+```json
+{
+  "switch-project": true,
+  "switch-preview-model": true
+}
+```
+
+## Use Cases
+
+### High Availability Setup
+
+**Enable both features** for maximum uptime:
+
+```yaml
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+```
+
+Best for production environments where uninterrupted service is critical.
+
+### Strict Quota Monitoring
+
+**Disable both features** to track quota usage:
+
+```yaml
+quota-exceeded:
+  switch-project: false
+  switch-preview-model: false
+```
+
+Best for development/testing when you need to know exactly when quotas are hit.
+
+### Project-Level Failover Only
+
+**Enable project switching** but disable preview models:
+
+```yaml
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: false
+```
+
+Best when you want failover between accounts but prefer explicit model selection.
+
+### Model-Level Failover Only
+
+**Enable preview switching** but disable project switching:
+
+```yaml
+quota-exceeded:
+  switch-project: false
+  switch-preview-model: true
+```
+
+Best when you have a single account but want automatic fallback to preview models.
+
+## Related Configuration
+
+Quota handling works alongside:
+
+- **Request Retry** (`/v0/management/request-retry`) - Number of retry attempts
+- **Max Retry Interval** (`/v0/management/max-retry-interval`) - Max wait before retry
+- **Routing Strategy** (`/v0/management/routing/strategy`) - How credentials are selected
+
+See [Configuration Endpoints](/api/management/config) for details.
+
+## Error Responses
+
+### Invalid Value
+
+```json
+{
+  "error": "invalid body"
+}
+```
+
+Returned when request body is malformed or missing `value` field.
+
+### Persistence Failure
+
+```json
+{
+  "error": "failed to save config: permission denied"
+}
+```
+
+Returned when config file cannot be written.
+
+## Next Steps
+
+- [Configuration Endpoints](/api/management/config) - Configure retry and routing behavior
+- [OAuth Endpoints](/api/management/oauth) - Manage provider authentication
+- [Log Endpoints](/api/management/logs) - Monitor quota exceeded events

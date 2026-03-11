@@ -1,0 +1,461 @@
+---
+title: Streaming & WebSockets
+description: Real-time streaming responses via SSE and WebSocket protocols
+---
+
+# Streaming Responses
+
+CLI Proxy API supports two methods for receiving real-time streaming responses:
+
+1. **Server-Sent Events (SSE)**: Standard HTTP streaming via the `/v1/chat/completions` endpoint
+2. **WebSocket**: Bidirectional streaming via the `/v1/responses` endpoint (OpenAI Responses format)
+
+## Server-Sent Events (SSE)
+
+### Enabling Streaming
+
+Set `stream: true` in your chat completions request:
+
+```bash
+curl http://localhost:8317/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "Write a poem about code"}
+    ],
+    "stream": true
+  }'
+```
+
+### SSE Response Format
+
+The server sends chunks as `data:` prefixed JSON objects:
+
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1694268190,"model":"gemini-2.5-pro","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1694268190,"model":"gemini-2.5-pro","choices":[{"index":0,"delta":{"content":"In"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1694268190,"model":"gemini-2.5-pro","choices":[{"index":0,"delta":{"content":" circuits"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1694268190,"model":"gemini-2.5-pro","choices":[{"index":0,"delta":{"content":" deep"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1694268190,"model":"gemini-2.5-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25}}
+
+data: [DONE]
+```
+
+### Chunk Structure
+
+<ResponseField name="id" type="string">
+  Unique identifier for the completion (same across all chunks).
+</ResponseField>
+
+<ResponseField name="object" type="string">
+  Always `chat.completion.chunk`.
+</ResponseField>
+
+<ResponseField name="created" type="integer">
+  Unix timestamp when the completion was created.
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  The model used for generation.
+</ResponseField>
+
+<ResponseField name="choices" type="array">
+  Array of completion choices (typically one element).
+  
+  <ResponseField name="index" type="integer">
+    Choice index (0 for single-choice requests).
+  </ResponseField>
+  
+  <ResponseField name="delta" type="object">
+    Incremental changes to the message.
+    
+    <ResponseField name="role" type="string">
+      Set to `assistant` in the first chunk only.
+    </ResponseField>
+    
+    <ResponseField name="content" type="string">
+      Text content delta for this chunk.
+    </ResponseField>
+    
+    <ResponseField name="tool_calls" type="array">
+      Incremental tool call updates (if function calling is used).
+    </ResponseField>
+  </ResponseField>
+  
+  <ResponseField name="finish_reason" type="string">
+    Why generation stopped. `null` for intermediate chunks, set in final chunk:
+    - `stop`: Natural completion
+    - `length`: Max tokens reached
+    - `tool_calls`: Model called a function
+    - `content_filter`: Content filtered
+  </ResponseField>
+</ResponseField>
+
+<ResponseField name="usage" type="object">
+  Token usage statistics (only in final chunk with `finish_reason`).
+</ResponseField>
+
+### SSE Headers
+
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+Access-Control-Allow-Origin: *
+```
+
+### Keep-Alive Behavior
+
+The SSE connection uses chunked transfer encoding and flushes after each chunk. The server automatically handles:
+
+- **Immediate Flush**: Each chunk is sent immediately to minimize latency
+- **Connection Management**: Graceful handling of client disconnects
+- **Error Streaming**: Errors during streaming are sent as error chunks (not HTTP errors)
+
+## WebSocket Streaming
+
+For more advanced use cases, CLI Proxy API provides a WebSocket endpoint that supports:
+
+- Bidirectional communication
+- Multi-turn conversations without reconnecting
+- Incremental input appending
+- Session management
+
+### WebSocket Endpoint
+
+```
+ws://localhost:8317/v1/responses
+```
+
+**Note**: Use `wss://` for secure WebSocket connections over TLS.
+
+### Authentication
+
+WebSocket authentication is controlled by the `websocket_auth` configuration setting:
+
+```yaml
+websocket_auth: true  # Require authentication (default)
+```
+
+When enabled, authenticate via query parameter or WebSocket subprotocol:
+
+```javascript
+// Via query parameter
+const ws = new WebSocket('ws://localhost:8317/v1/responses?api_key=YOUR_API_KEY');
+
+// Via subprotocol (recommended)
+const ws = new WebSocket('ws://localhost:8317/v1/responses', ['api-key', 'YOUR_API_KEY']);
+```
+
+### Request Format
+
+Send JSON text messages with one of these types:
+
+#### 1. response.create
+
+Start a new conversation:
+
+```json
+{
+  "type": "response.create",
+  "model": "gemini-2.5-pro",
+  "input": [
+    {"role": "user", "content": "Hello, how are you?"}
+  ],
+  "instructions": "You are a helpful assistant.",
+  "stream": true
+}
+```
+
+#### 2. response.append
+
+Continue an existing conversation:
+
+```json
+{
+  "type": "response.append",
+  "input": [
+    {"role": "user", "content": "Tell me more."}
+  ]
+}
+```
+
+The server automatically merges the previous response output with the new input.
+
+#### 3. Incremental Input (Advanced)
+
+For providers that support WebSocket v2 mode (like Codex), use `previous_response_id`:
+
+```json
+{
+  "type": "response.create",
+  "model": "codex-model",
+  "previous_response_id": "resp_abc123",
+  "input": [
+    {"role": "user", "content": "Additional context"}
+  ]
+}
+```
+
+This sends only the incremental input without expanding the full conversation history.
+
+### Response Events
+
+The server sends JSON text messages with different event types:
+
+#### response.created
+
+```json
+{
+  "type": "response.created",
+  "sequence_number": 0,
+  "response": {
+    "id": "resp_abc123",
+    "object": "response",
+    "created_at": 1694268190,
+    "status": "in_progress",
+    "model": "gemini-2.5-pro",
+    "output": []
+  }
+}
+```
+
+#### Content Deltas
+
+Streaming content chunks:
+
+```json
+{
+  "type": "content.delta",
+  "sequence_number": 1,
+  "content_index": 0,
+  "delta": {
+    "type": "text",
+    "text": "Hello"
+  }
+}
+```
+
+#### response.completed
+
+```json
+{
+  "type": "response.completed",
+  "sequence_number": 42,
+  "response": {
+    "id": "resp_abc123",
+    "object": "response",
+    "created_at": 1694268190,
+    "status": "completed",
+    "model": "gemini-2.5-pro",
+    "output": [
+      {
+        "type": "message",
+        "role": "assistant",
+        "content": "Hello! I'm doing well, thank you for asking."
+      }
+    ],
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 15,
+      "total_tokens": 25
+    }
+  }
+}
+```
+
+#### error
+
+```json
+{
+  "type": "error",
+  "status": 400,
+  "error": {
+    "type": "invalid_request_error",
+    "message": "Missing model in response.create request"
+  }
+}
+```
+
+### WebSocket Implementation
+
+From `openai_responses_websocket.go:49-194`:
+
+```go
+func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
+    conn, err := responsesWebsocketUpgrader.Upgrade(c.Writer, c.Request, nil)
+    if err != nil {
+        return
+    }
+    
+    // Session management
+    passthroughSessionID := uuid.NewString()
+    
+    // Message loop
+    for {
+        msgType, payload, err := conn.ReadMessage()
+        // ... process request ...
+        
+        // Forward to upstream provider
+        dataChan, errChan := h.ExecuteStreamWithAuthManager(...)
+        
+        // Stream response back to client
+        h.forwardResponsesWebsocket(conn, dataChan, errChan)
+    }
+}
+```
+
+Key features:
+- **Session Pinning**: Once a provider is selected for the first request, subsequent requests in the session use the same provider
+- **Error Handling**: Errors are sent as WebSocket messages, not connection closes
+- **Automatic Reconnect**: Clients can reconnect with the same `x-codex-turn-state` header to resume a session
+
+## JavaScript Example
+
+```javascript
+const ws = new WebSocket('ws://localhost:8317/v1/responses');
+
+ws.onopen = () => {
+  // Start conversation
+  ws.send(JSON.stringify({
+    type: 'response.create',
+    model: 'gemini-2.5-pro',
+    input: [{ role: 'user', content: 'Hello!' }],
+    stream: true
+  }));
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  switch (message.type) {
+    case 'response.created':
+      console.log('Response started:', message.response.id);
+      break;
+      
+    case 'content.delta':
+      process.stdout.write(message.delta.text);
+      break;
+      
+    case 'response.completed':
+      console.log('\nCompleted:', message.response);
+      
+      // Continue conversation
+      ws.send(JSON.stringify({
+        type: 'response.append',
+        input: [{ role: 'user', content: 'Tell me more.' }]
+      }));
+      break;
+      
+    case 'error':
+      console.error('Error:', message.error);
+      ws.close();
+      break;
+  }
+};
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+  console.log('WebSocket closed');
+};
+```
+
+## Python Example (SSE)
+
+```python
+import requests
+import json
+
+url = 'http://localhost:8317/v1/chat/completions'
+headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer YOUR_API_KEY'
+}
+data = {
+    'model': 'gemini-2.5-pro',
+    'messages': [{'role': 'user', 'content': 'Count to 10'}],
+    'stream': True
+}
+
+with requests.post(url, headers=headers, json=data, stream=True) as response:
+    for line in response.iter_lines():
+        if line:
+            line = line.decode('utf-8')
+            if line.startswith('data: '):
+                content = line[6:]
+                if content == '[DONE]':
+                    break
+                chunk = json.loads(content)
+                if chunk['choices'][0]['delta'].get('content'):
+                    print(chunk['choices'][0]['delta']['content'], end='', flush=True)
+```
+
+## Configuration
+
+### Disable WebSocket Authentication
+
+For development or internal networks:
+
+```yaml
+websocket_auth: false
+```
+
+### Keep-Alive Settings
+
+For long-running streams, the proxy includes keep-alive mechanisms:
+
+- **SSE**: Automatic flush after each chunk
+- **WebSocket**: Ping/pong frames handled by underlying gorilla/websocket library
+- **HTTP Timeouts**: Configurable via reverse proxy (Nginx, etc.)
+
+<Warning>
+  WebSocket connections remain open until explicitly closed by the client or an error occurs. Make sure to implement proper connection management in production.
+</Warning>
+
+## Error Handling
+
+### SSE Errors
+
+Errors during SSE streaming are sent as error chunks:
+
+```
+data: {"error":{"message":"Model quota exceeded","type":"rate_limit_error"},"status":429}
+```
+
+### WebSocket Errors
+
+WebSocket errors are sent as `error` event messages:
+
+```json
+{
+  "type": "error",
+  "status": 503,
+  "error": {
+    "type": "server_error",
+    "message": "Upstream provider unavailable"
+  }
+}
+```
+
+The connection remains open after error messages, allowing retry logic.
+
+## Best Practices
+
+1. **Connection Reuse**: For multiple requests, use WebSocket instead of opening new SSE connections
+2. **Timeout Handling**: Implement client-side timeouts for stalled streams
+3. **Graceful Degradation**: Fall back to non-streaming if streaming fails
+4. **Buffer Management**: Process chunks immediately to avoid memory buildup
+5. **Error Recovery**: Implement exponential backoff for reconnection attempts
+
+<Note>
+  The streaming implementation automatically handles provider-specific quirks and normalizes responses to the OpenAI format. See `sdk/api/handlers/openai/openai_handlers.go` for the SSE implementation and `openai_responses_websocket.go` for WebSocket handling.
+</Note>

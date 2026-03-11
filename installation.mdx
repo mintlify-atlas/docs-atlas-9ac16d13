@@ -1,0 +1,774 @@
+---
+title: Installation
+description: Complete installation guide for CLI Proxy API across all platforms and deployment methods
+---
+
+# Installation Guide
+
+This comprehensive guide covers all installation methods for CLI Proxy API, including binary releases, Docker, and building from source. Choose the method that best fits your environment and requirements.
+
+## System Requirements
+
+Before installing, ensure your system meets these requirements:
+
+### Minimum Requirements
+
+- **CPU**: 1 core (2+ cores recommended for production)
+- **RAM**: 512 MB (2 GB+ recommended for production)
+- **Storage**: 100 MB for binary, 500 MB+ for auth tokens and logs
+- **Network**: Outbound HTTPS access to provider APIs
+
+### Supported Platforms
+
+<Tabs>
+  <Tab title="Linux">
+    - **Distributions**: Ubuntu 20.04+, Debian 11+, CentOS 8+, RHEL 8+, Fedora 35+
+    - **Architectures**: AMD64 (x86_64), ARM64 (aarch64)
+    - **Kernel**: 4.15+ (5.x recommended)
+  </Tab>
+  
+  <Tab title="macOS">
+    - **Versions**: macOS 11 (Big Sur) or later
+    - **Architectures**: Intel (x86_64), Apple Silicon (ARM64)
+    - **Xcode**: Not required for binary installation
+  </Tab>
+  
+  <Tab title="Windows">
+    - **Versions**: Windows 10 (1809+), Windows 11, Windows Server 2019+
+    - **Architectures**: AMD64 (x86_64)
+    - **WSL2**: Supported for Linux binary
+  </Tab>
+</Tabs>
+
+<Note>
+  For production deployments, we recommend Linux servers with at least 2 CPU cores and 2 GB RAM to handle concurrent requests efficiently.
+</Note>
+
+## Installation Methods
+
+### Binary Release (Recommended)
+
+The easiest way to get started. Pre-built binaries are available for all major platforms.
+
+<Tabs>
+  <Tab title="Linux">
+
+#### AMD64 (x86_64)
+
+```bash
+# Download the latest release
+VERSION=$(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep tag_name | cut -d '"' -f 4)
+wget https://github.com/router-for-me/CLIProxyAPI/releases/download/${VERSION}/cli-proxy-api_linux_amd64.tar.gz
+
+# Extract the archive
+tar -xzf cli-proxy-api_linux_amd64.tar.gz
+
+# Make executable
+chmod +x cli-proxy-api
+
+# Move to system path (optional)
+sudo mv cli-proxy-api /usr/local/bin/
+
+# Verify installation
+cli-proxy-api -h
+```
+
+#### ARM64 (aarch64)
+
+```bash
+# Download ARM64 binary
+VERSION=$(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep tag_name | cut -d '"' -f 4)
+wget https://github.com/router-for-me/CLIProxyAPI/releases/download/${VERSION}/cli-proxy-api_linux_arm64.tar.gz
+
+# Extract and install
+tar -xzf cli-proxy-api_linux_arm64.tar.gz
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+```
+
+#### Create systemd Service
+
+For running CLI Proxy API as a system service:
+
+```bash systemd service
+# Create service file
+sudo tee /etc/systemd/system/cli-proxy-api.service > /dev/null <<EOF
+[Unit]
+Description=CLI Proxy API Server
+After=network.target
+
+[Service]
+Type=simple
+User=cliproxy
+Group=cliproxy
+WorkingDirectory=/opt/cli-proxy-api
+ExecStart=/usr/local/bin/cli-proxy-api -config /opt/cli-proxy-api/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cli-proxy-api
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create user and directories
+sudo useradd -r -s /bin/false cliproxy
+sudo mkdir -p /opt/cli-proxy-api/{logs,config}
+sudo chown -R cliproxy:cliproxy /opt/cli-proxy-api
+
+# Enable and start service
+sudo systemctl daemon-reload
+sudo systemctl enable cli-proxy-api
+sudo systemctl start cli-proxy-api
+
+# Check status
+sudo systemctl status cli-proxy-api
+```
+
+  </Tab>
+  
+  <Tab title="macOS">
+
+#### Intel (x86_64)
+
+```bash
+# Download the latest release
+VERSION=$(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep tag_name | cut -d '"' -f 4)
+curl -L -o cli-proxy-api_darwin_amd64.tar.gz \
+  https://github.com/router-for-me/CLIProxyAPI/releases/download/${VERSION}/cli-proxy-api_darwin_amd64.tar.gz
+
+# Extract
+tar -xzf cli-proxy-api_darwin_amd64.tar.gz
+
+# Make executable and move to PATH
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+
+# Verify
+cli-proxy-api -h
+```
+
+#### Apple Silicon (ARM64)
+
+```bash
+# Download ARM64 binary for Apple Silicon
+VERSION=$(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep tag_name | cut -d '"' -f 4)
+curl -L -o cli-proxy-api_darwin_arm64.tar.gz \
+  https://github.com/router-for-me/CLIProxyAPI/releases/download/${VERSION}/cli-proxy-api_darwin_arm64.tar.gz
+
+# Extract and install
+tar -xzf cli-proxy-api_darwin_arm64.tar.gz
+chmod +x cli-proxy-api
+sudo mv cli-proxy-api /usr/local/bin/
+```
+
+<Warning>
+  On first run, macOS may show a security warning. Go to **System Settings → Privacy & Security** and click **Allow Anyway** to run the binary.
+</Warning>
+
+#### Create launchd Service
+
+For running as a background service on macOS:
+
+```xml ~/Library/LaunchAgents/com.cliproxyapi.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cliproxyapi</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/cli-proxy-api</string>
+        <string>-config</string>
+        <string>/Users/YOUR_USERNAME/.cli-proxy-api/config.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/.cli-proxy-api/logs/stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/.cli-proxy-api/logs/stderr.log</string>
+</dict>
+</plist>
+```
+
+```bash
+# Load the service
+launchctl load ~/Library/LaunchAgents/com.cliproxyapi.plist
+
+# Start the service
+launchctl start com.cliproxyapi
+
+# Check if running
+launchctl list | grep cliproxyapi
+```
+
+  </Tab>
+  
+  <Tab title="Windows">
+
+#### Download and Install
+
+```powershell PowerShell
+# Download latest release
+$version = (Invoke-WebRequest -Uri "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest" | ConvertFrom-Json).tag_name
+$url = "https://github.com/router-for-me/CLIProxyAPI/releases/download/$version/cli-proxy-api_windows_amd64.zip"
+Invoke-WebRequest -Uri $url -OutFile "cli-proxy-api.zip"
+
+# Extract
+Expand-Archive -Path "cli-proxy-api.zip" -DestinationPath "C:\Program Files\CLIProxyAPI"
+
+# Add to PATH (run as Administrator)
+[Environment]::SetEnvironmentVariable(
+    "Path",
+    [Environment]::GetEnvironmentVariable("Path", "Machine") + ";C:\Program Files\CLIProxyAPI",
+    "Machine"
+)
+
+# Verify
+cli-proxy-api.exe -h
+```
+
+#### Run as Windows Service
+
+Using NSSM (Non-Sucking Service Manager):
+
+```powershell
+# Download NSSM
+Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile "nssm.zip"
+Expand-Archive -Path "nssm.zip" -DestinationPath "C:\nssm"
+
+# Install service
+C:\nssm\nssm-2.24\win64\nssm.exe install CLIProxyAPI "C:\Program Files\CLIProxyAPI\cli-proxy-api.exe"
+C:\nssm\nssm-2.24\win64\nssm.exe set CLIProxyAPI AppParameters "-config C:\ProgramData\CLIProxyAPI\config.yaml"
+C:\nssm\nssm-2.24\win64\nssm.exe set CLIProxyAPI AppDirectory "C:\Program Files\CLIProxyAPI"
+
+# Start service
+Start-Service CLIProxyAPI
+
+# Check status
+Get-Service CLIProxyAPI
+```
+
+  </Tab>
+</Tabs>
+
+### Docker Installation
+
+Docker provides the easiest deployment with automatic updates and isolated environments.
+
+#### Pull Pre-built Image
+
+```bash
+# Pull the latest official image
+docker pull eceasy/cli-proxy-api:latest
+
+# Or pull a specific version
+docker pull eceasy/cli-proxy-api:v6.0.0
+```
+
+#### Run with Docker
+
+```bash Basic Docker Run
+# Create directories
+mkdir -p ~/cli-proxy/{config,auths,logs}
+
+# Create config file
+cat > ~/cli-proxy/config/config.yaml <<EOF
+host: ""
+port: 8317
+auth-dir: "/root/.cli-proxy-api"
+api-keys:
+  - "your-secure-api-key"
+debug: false
+EOF
+
+# Run container
+docker run -d \
+  --name cli-proxy-api \
+  --restart unless-stopped \
+  -p 8317:8317 \
+  -v ~/cli-proxy/config/config.yaml:/CLIProxyAPI/config.yaml \
+  -v ~/cli-proxy/auths:/root/.cli-proxy-api \
+  -v ~/cli-proxy/logs:/CLIProxyAPI/logs \
+  eceasy/cli-proxy-api:latest
+
+# View logs
+docker logs -f cli-proxy-api
+```
+
+#### Docker Compose (Recommended)
+
+Create a `docker-compose.yml` file:
+
+```yaml docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cli-proxy-api
+    restart: unless-stopped
+    
+    ports:
+      - "8317:8317"      # Main API
+      - "8085:8085"      # OAuth callback (Gemini)
+      - "1455:1455"      # OAuth callback (Claude)
+      - "54545:54545"    # OAuth callback (Codex)
+      - "51121:51121"    # OAuth callback (Qwen)
+      - "11451:11451"    # OAuth callback (iFlow)
+    
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs
+    
+    environment:
+      - TZ=America/New_York  # Set your timezone
+    
+    # Optional: Use environment variables for sensitive data
+    # env_file:
+    #   - .env
+```
+
+```bash
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Restart services
+docker-compose restart
+```
+
+<Tip>
+  The Docker image includes all OAuth callback ports. Only expose ports you need for your OAuth providers.
+</Tip>
+
+#### Build Custom Docker Image
+
+To build from source with custom modifications:
+
+```dockerfile Dockerfile
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+  -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
+  -o ./CLIProxyAPI ./cmd/server/
+
+FROM alpine:3.22.0
+
+RUN apk add --no-cache tzdata ca-certificates
+
+WORKDIR /CLIProxyAPI
+
+COPY --from=builder /app/CLIProxyAPI .
+COPY config.example.yaml .
+
+EXPOSE 8317
+
+CMD ["./CLIProxyAPI"]
+```
+
+```bash
+# Build image
+docker build -t my-cli-proxy-api:latest \
+  --build-arg VERSION=v6.0.0 \
+  --build-arg COMMIT=$(git rev-parse --short HEAD) \
+  --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+  .
+
+# Run your custom image
+docker run -d --name cli-proxy-api my-cli-proxy-api:latest
+```
+
+### Build from Source
+
+For developers or custom modifications, build from source.
+
+#### Prerequisites
+
+- **Go**: Version 1.26 or later ([download](https://go.dev/dl/))
+- **Git**: For cloning the repository
+- **Make**: Optional, for using Makefile commands
+
+#### Build Steps
+
+```bash Clone and Build
+# Clone the repository
+git clone https://github.com/router-for-me/CLIProxyAPI.git
+cd CLIProxyAPI
+
+# Download dependencies
+go mod download
+
+# Build the binary
+go build -o cli-proxy-api \
+  -ldflags="-s -w -X 'main.Version=dev' -X 'main.Commit=$(git rev-parse --short HEAD)' -X 'main.BuildDate=$(date -u +"%Y-%m-%dT%H:%M:%SZ")'" \
+  ./cmd/server/
+
+# Run the binary
+./cli-proxy-api
+```
+
+#### Build for Different Platforms
+
+```bash Cross-compilation
+# Build for Linux AMD64
+GOOS=linux GOARCH=amd64 go build -o cli-proxy-api-linux-amd64 ./cmd/server/
+
+# Build for Linux ARM64
+GOOS=linux GOARCH=arm64 go build -o cli-proxy-api-linux-arm64 ./cmd/server/
+
+# Build for macOS Intel
+GOOS=darwin GOARCH=amd64 go build -o cli-proxy-api-darwin-amd64 ./cmd/server/
+
+# Build for macOS Apple Silicon
+GOOS=darwin GOARCH=arm64 go build -o cli-proxy-api-darwin-arm64 ./cmd/server/
+
+# Build for Windows
+GOOS=windows GOARCH=amd64 go build -o cli-proxy-api-windows-amd64.exe ./cmd/server/
+```
+
+#### Using GoReleaser
+
+For release builds with all platforms:
+
+```bash
+# Install GoReleaser
+go install github.com/goreleaser/goreleaser@latest
+
+# Build snapshot (without publishing)
+goreleaser release --snapshot --clean
+
+# Binaries will be in dist/ directory
+ls -lh dist/
+```
+
+<Note>
+  The `.goreleaser.yml` configuration file in the repository defines build targets for Linux, macOS, and Windows on both AMD64 and ARM64 architectures.
+</Note>
+
+## Initial Configuration
+
+After installation, configure CLI Proxy API for your environment.
+
+### Create Configuration File
+
+```bash
+# Copy example config
+cp config.example.yaml config.yaml
+
+# Edit with your settings
+vim config.yaml
+```
+
+### Minimal Configuration
+
+```yaml config.yaml
+# Basic server settings
+host: ""  # Bind to all interfaces
+port: 8317
+
+# Authentication
+auth-dir: "~/.cli-proxy-api"
+api-keys:
+  - "$(openssl rand -hex 32)"
+
+# Logging
+debug: false
+logging-to-file: true
+
+# Performance
+request-retry: 3
+routing:
+  strategy: "round-robin"
+```
+
+### Configuration Validation
+
+Test your configuration before starting the service:
+
+```bash
+# Dry-run to check config syntax
+cli-proxy-api -config config.yaml &
+sleep 2
+kill %1
+
+# Check logs for errors
+grep -i error logs/app.log
+```
+
+## OAuth Authentication Setup
+
+Authenticate with at least one provider:
+
+```bash Gemini OAuth
+# For binary installation
+./cli-proxy-api -login
+
+# For Docker
+docker exec -it cli-proxy-api ./CLIProxyAPI -login
+```
+
+<CardGroup cols={2}>
+  <Card title="Gemini OAuth" icon="google" href="/oauth/gemini">
+    Authenticate with Google Gemini CLI
+  </Card>
+  <Card title="Claude OAuth" icon="robot" href="/oauth/claude">
+    Authenticate with Claude Code
+  </Card>
+  <Card title="Codex OAuth" icon="openai" href="/oauth/codex">
+    Authenticate with OpenAI Codex
+  </Card>
+  <Card title="Other Providers" icon="plug" href="/oauth/qwen">
+    Qwen, iFlow, Kimi, and Antigravity
+  </Card>
+</CardGroup>
+
+## Verification
+
+Verify your installation is working:
+
+```bash Health Check
+# Check server is running
+curl http://localhost:8317/health
+
+# List available models
+curl http://localhost:8317/v1/models \
+  -H "Authorization: Bearer your-api-key"
+
+# Test API call
+curl http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-2.5-pro", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Expected output:
+
+```json
+{"status": "ok"}
+```
+
+## Upgrading
+
+Keep CLI Proxy API up to date:
+
+<Tabs>
+  <Tab title="Binary">
+
+```bash
+# Download latest version
+VERSION=$(curl -s https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest | grep tag_name | cut -d '"' -f 4)
+wget https://github.com/router-for-me/CLIProxyAPI/releases/download/${VERSION}/cli-proxy-api_linux_amd64.tar.gz
+
+# Stop service
+sudo systemctl stop cli-proxy-api
+
+# Replace binary
+tar -xzf cli-proxy-api_linux_amd64.tar.gz
+sudo mv cli-proxy-api /usr/local/bin/
+
+# Start service
+sudo systemctl start cli-proxy-api
+
+# Verify new version
+cli-proxy-api -h
+```
+
+  </Tab>
+  
+  <Tab title="Docker">
+
+```bash
+# Pull latest image
+docker pull eceasy/cli-proxy-api:latest
+
+# Stop and remove old container
+docker stop cli-proxy-api
+docker rm cli-proxy-api
+
+# Start new container (same command as installation)
+docker run -d --name cli-proxy-api ... eceasy/cli-proxy-api:latest
+
+# Or with Docker Compose
+docker-compose pull
+docker-compose up -d
+```
+
+  </Tab>
+  
+  <Tab title="Source">
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Rebuild
+go build -o cli-proxy-api ./cmd/server/
+
+# Restart service
+sudo systemctl restart cli-proxy-api
+```
+
+  </Tab>
+</Tabs>
+
+<Warning>
+  Always backup your `config.yaml` and `~/.cli-proxy-api/` directory before upgrading.
+</Warning>
+
+## Uninstallation
+
+<Tabs>
+  <Tab title="Binary">
+
+```bash
+# Stop service
+sudo systemctl stop cli-proxy-api
+sudo systemctl disable cli-proxy-api
+
+# Remove service file
+sudo rm /etc/systemd/system/cli-proxy-api.service
+sudo systemctl daemon-reload
+
+# Remove binary
+sudo rm /usr/local/bin/cli-proxy-api
+
+# Remove data (optional)
+rm -rf ~/.cli-proxy-api
+rm -rf /opt/cli-proxy-api
+```
+
+  </Tab>
+  
+  <Tab title="Docker">
+
+```bash
+# Stop and remove container
+docker stop cli-proxy-api
+docker rm cli-proxy-api
+
+# Remove image
+docker rmi eceasy/cli-proxy-api:latest
+
+# Remove volumes (optional)
+rm -rf ~/cli-proxy
+```
+
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+
+<Accordion title="Command not found after installation">
+
+**Linux/macOS:**
+
+```bash
+# Ensure binary is in PATH
+echo $PATH
+
+# Add to PATH in ~/.bashrc or ~/.zshrc
+export PATH="$PATH:/usr/local/bin"
+
+# Reload shell
+source ~/.bashrc
+```
+
+**Windows:**
+
+Ensure `C:\Program Files\CLIProxyAPI` is in your system PATH.
+
+</Accordion>
+
+<Accordion title="Permission denied error">
+
+```bash
+# Make binary executable
+chmod +x cli-proxy-api
+
+# Or run with sudo
+sudo ./cli-proxy-api
+```
+
+</Accordion>
+
+<Accordion title="Docker container exits immediately">
+
+```bash
+# Check logs for errors
+docker logs cli-proxy-api
+
+# Common issues:
+# 1. Invalid config.yaml syntax
+# 2. Port already in use
+# 3. Missing volume mounts
+
+# Test config syntax
+docker run --rm -v $(pwd)/config.yaml:/CLIProxyAPI/config.yaml \
+  eceasy/cli-proxy-api:latest \
+  ./CLIProxyAPI -config /CLIProxyAPI/config.yaml
+```
+
+</Accordion>
+
+<Accordion title="Build fails with Go version error">
+
+```bash
+# Check Go version
+go version
+
+# Upgrade Go if needed
+# Visit: https://go.dev/dl/
+
+# Or use Docker to build
+docker run --rm -v $(pwd):/app -w /app golang:1.26 \
+  go build -o cli-proxy-api ./cmd/server/
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get your first API call working in 5 minutes
+  </Card>
+  <Card title="Server Configuration" icon="gear" href="/configuration/server">
+    Learn about all configuration options
+  </Card>
+  <Card title="OAuth Setup" icon="key" href="/oauth/gemini">
+    Authenticate with your provider accounts
+  </Card>
+  <Card title="Production Deployment" icon="server" href="/deployment/docker">
+    Deploy to production with best practices
+  </Card>
+</CardGroup>

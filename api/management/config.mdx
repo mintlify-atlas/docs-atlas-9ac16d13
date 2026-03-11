@@ -1,0 +1,456 @@
+---
+title: Configuration Endpoints
+description: Manage CLI Proxy API server configuration at runtime
+---
+
+The configuration endpoints allow you to read and modify the server configuration dynamically without restarting.
+
+## Get Configuration
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/config`
+</ParamField>
+
+Returns the complete in-memory configuration as JSON.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/config
+```
+
+### Response
+
+<ResponseField name="host" type="string">
+  Server bind address (empty for all interfaces)
+</ResponseField>
+
+<ResponseField name="port" type="number">
+  Server port number
+</ResponseField>
+
+<ResponseField name="debug" type="boolean">
+  Debug logging enabled
+</ResponseField>
+
+<ResponseField name="api-keys" type="string[]">
+  List of API keys for authentication
+</ResponseField>
+
+<ResponseField name="remote-management" type="object">
+  Management API configuration
+  
+  <ResponseField name="allow-remote" type="boolean">
+    Allow non-localhost management access
+  </ResponseField>
+  
+  <ResponseField name="secret-key" type="string">
+    Hashed management key
+  </ResponseField>
+</ResponseField>
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 8317,
+  "debug": false,
+  "api-keys": ["key1", "key2"],
+  "remote-management": {
+    "allow-remote": false,
+    "secret-key": "$2a$10$..."
+  },
+  "usage-statistics-enabled": true,
+  "logging-to-file": true
+}
+```
+
+## Get Raw Configuration
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/config.yaml`
+</ParamField>
+
+Returns the raw YAML configuration file with all comments and formatting preserved.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/config.yaml
+```
+
+### Response
+
+```yaml
+# Server host/interface to bind to
+host: "127.0.0.1"
+
+# Server port
+port: 8317
+
+# Enable debug logging
+debug: false
+
+# API keys for authentication
+api-keys:
+  - "your-api-key-1"
+  - "your-api-key-2"
+```
+
+## Update Configuration
+
+<ParamField path="PUT" type="endpoint">
+  `/v0/management/config.yaml`
+</ParamField>
+
+Replaces the entire configuration file with new YAML content. The config is validated before writing.
+
+### Request
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/yaml" \
+  --data-binary @config.yaml \
+  http://localhost:8317/v0/management/config.yaml
+```
+
+### Request Body
+
+Raw YAML configuration content.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  Success indicator
+</ResponseField>
+
+<ResponseField name="changed" type="string[]">
+  List of changed fields
+</ResponseField>
+
+```json
+{
+  "ok": true,
+  "changed": ["config"]
+}
+```
+
+### Error Responses
+
+```json
+{
+  "error": "invalid_yaml",
+  "message": "yaml: unmarshal errors:\n  line 5: cannot unmarshal..."
+}
+```
+
+```json
+{
+  "error": "invalid_config",
+  "message": "port must be between 1 and 65535"
+}
+```
+
+## Get Latest Version
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/latest-version`
+</ParamField>
+
+Checks GitHub for the latest release version.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/latest-version
+```
+
+### Response
+
+<ResponseField name="latest-version" type="string">
+  Latest version tag from GitHub releases
+</ResponseField>
+
+```json
+{
+  "latest-version": "v6.0.0"
+}
+```
+
+## Update Individual Fields
+
+Many configuration fields have dedicated GET/PUT/PATCH endpoints for granular updates.
+
+### Debug Mode
+
+```bash
+# Get debug status
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/debug
+
+# Response: {"debug": false}
+
+# Enable debug mode
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/debug
+
+# Response: {"status": "ok"}
+```
+
+### Usage Statistics
+
+```bash
+# Get usage statistics setting
+GET /v0/management/usage-statistics-enabled
+
+# Enable usage statistics
+PUT /v0/management/usage-statistics-enabled
+{
+  "value": true
+}
+```
+
+### Logging to File
+
+```bash
+# Get logging setting
+GET /v0/management/logging-to-file
+
+# Enable file logging
+PUT /v0/management/logging-to-file
+{
+  "value": true
+}
+```
+
+### Proxy URL
+
+```bash
+# Get proxy URL
+GET /v0/management/proxy-url
+
+# Set proxy URL
+PUT /v0/management/proxy-url
+{
+  "value": "socks5://proxy.example.com:1080"
+}
+
+# Clear proxy URL
+DELETE /v0/management/proxy-url
+```
+
+### Request Retry
+
+```bash
+# Get retry count
+GET /v0/management/request-retry
+
+# Set retry count
+PUT /v0/management/request-retry
+{
+  "value": 5
+}
+```
+
+### Routing Strategy
+
+```bash
+# Get routing strategy
+GET /v0/management/routing/strategy
+
+# Set routing strategy (round-robin or fill-first)
+PUT /v0/management/routing/strategy
+{
+  "value": "round-robin"
+}
+```
+
+## Manage API Keys
+
+### List API Keys
+
+```bash
+GET /v0/management/api-keys
+```
+
+```json
+{
+  "api-keys": ["key1", "key2", "key3"]
+}
+```
+
+### Replace All Keys
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '["new-key-1", "new-key-2"]' \
+  http://localhost:8317/v0/management/api-keys
+```
+
+Or with wrapper object:
+
+```json
+{
+  "items": ["new-key-1", "new-key-2"]
+}
+```
+
+### Update Specific Key
+
+```bash
+# Replace key by index
+curl -X PATCH \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"index": 0, "value": "updated-key"}' \
+  http://localhost:8317/v0/management/api-keys
+
+# Replace by matching old value
+curl -X PATCH \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"old": "old-key", "new": "new-key"}' \
+  http://localhost:8317/v0/management/api-keys
+```
+
+### Delete API Key
+
+```bash
+# Delete by index
+DELETE /v0/management/api-keys?index=0
+
+# Delete by value
+DELETE /v0/management/api-keys?value=key-to-delete
+```
+
+## Manage Provider Keys
+
+### Gemini API Keys
+
+```bash
+# Get all Gemini keys
+GET /v0/management/gemini-api-key
+
+# Replace all keys
+PUT /v0/management/gemini-api-key
+[
+  {
+    "api-key": "AIzaSy...",
+    "prefix": "main",
+    "base-url": "https://generativelanguage.googleapis.com",
+    "excluded-models": ["gemini-2.5-pro"]
+  }
+]
+
+# Update specific key by index
+PATCH /v0/management/gemini-api-key
+{
+  "index": 0,
+  "value": {
+    "api-key": "AIzaSy...",
+    "prefix": "updated"
+  }
+}
+
+# Delete by API key
+DELETE /v0/management/gemini-api-key?api-key=AIzaSy...
+
+# Delete by index
+DELETE /v0/management/gemini-api-key?index=0
+```
+
+### Claude API Keys
+
+```bash
+# Get all Claude keys
+GET /v0/management/claude-api-key
+
+# Update specific key
+PATCH /v0/management/claude-api-key
+{
+  "match": "sk-ant-...",
+  "value": {
+    "api-key": "sk-ant-...",
+    "base-url": "https://api.anthropic.com",
+    "models": [
+      {"name": "claude-3-5-sonnet-20241022", "alias": "claude-sonnet"}
+    ]
+  }
+}
+```
+
+### Codex API Keys
+
+```bash
+# Get all Codex keys
+GET /v0/management/codex-api-key
+
+# Similar update/delete operations as other providers
+PUT /v0/management/codex-api-key
+PATCH /v0/management/codex-api-key
+DELETE /v0/management/codex-api-key
+```
+
+### OpenAI Compatibility
+
+```bash
+# Get OpenAI-compatible providers
+GET /v0/management/openai-compatibility
+
+# Add/update provider
+PATCH /v0/management/openai-compatibility
+{
+  "name": "openrouter",
+  "value": {
+    "name": "openrouter",
+    "base-url": "https://openrouter.ai/api/v1",
+    "api-key-entries": [
+      {"api-key": "sk-or-v1-..."}
+    ],
+    "models": [
+      {"name": "qwen3.5-plus", "alias": "claude-opus-4.66"}
+    ]
+  }
+}
+
+# Delete provider
+DELETE /v0/management/openai-compatibility?name=openrouter
+```
+
+### Vertex API Keys
+
+```bash
+# Get Vertex-compatible keys
+GET /v0/management/vertex-api-key
+
+# Update operations similar to other providers
+PUT /v0/management/vertex-api-key
+PATCH /v0/management/vertex-api-key
+DELETE /v0/management/vertex-api-key
+```
+
+## Configuration Persistence
+
+All configuration updates are:
+1. Validated before applying
+2. Written to the config file with comments preserved
+3. Immediately active (no restart required)
+4. Synchronized to disk with `fsync` for durability
+
+<Warning>
+  **Important:** Configuration changes are persisted immediately. Make sure to backup your config file before making bulk changes.
+</Warning>
+
+## Next Steps
+
+- [OAuth Endpoints](/api/management/oauth) - Manage OAuth authentication
+- [Quota Endpoints](/api/management/quota) - Configure quota behavior
+- [Log Endpoints](/api/management/logs) - Access server logs

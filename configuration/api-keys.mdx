@@ -1,0 +1,248 @@
+---
+title: API Keys
+description: Configure API key authentication and management for the CLI Proxy API
+---
+
+## Overview
+
+API keys control client authentication to the CLI Proxy API server. The proxy supports multiple API keys for different clients and teams, along with a separate management API key for administrative access.
+
+## Client API Keys
+
+<ParamField path="api-keys" type="string[]" default="[]">
+  List of API keys for authenticating clients to the proxy server.
+  
+  **Example:**
+  ```yaml
+  api-keys:
+    - "your-api-key-1"
+    - "your-api-key-2"
+    - "your-api-key-3"
+  ```
+  
+  <Note>
+    Clients must include the API key in the `Authorization` header as `Bearer <api-key>` when making requests.
+  </Note>
+</ParamField>
+
+### Authentication Methods
+
+Clients authenticate using the `Authorization` header:
+
+```bash
+curl https://your-proxy.com/v1/models \
+  -H "Authorization: Bearer your-api-key-1"
+```
+
+For OpenAI SDK:
+
+```python
+import openai
+
+client = openai.OpenAI(
+    api_key="your-api-key-1",
+    base_url="https://your-proxy.com/v1"
+)
+```
+
+## Authentication Directory
+
+<ParamField path="auth-dir" type="string" default="~/.cli-proxy-api">
+  Directory where authentication token files are stored. Supports `~` for home directory expansion.
+  
+  **Purpose:**
+  - Stores OAuth tokens for providers (Gemini, Claude, Codex, etc.)
+  - Maintains session state for authenticated providers
+  - Persists credentials across server restarts
+  
+  **Example:**
+  ```yaml
+  auth-dir: "~/.cli-proxy-api"
+  ```
+  
+  **Custom path:**
+  ```yaml
+  auth-dir: "/var/lib/cli-proxy-api/auth"
+  ```
+  
+  <Tip>
+    Ensure the auth directory has proper permissions (0700) to protect stored credentials.
+  </Tip>
+</ParamField>
+
+## Management API
+
+The Management API provides administrative access to the proxy for configuration, monitoring, and OAuth session management.
+
+<ParamField path="remote-management" type="object">
+  Management API settings for administrative access.
+  
+  <Expandable title="Management Properties">
+    <ParamField path="remote-management.allow-remote" type="boolean" default="false">
+      Whether to allow remote (non-localhost) management access.
+      
+      **When false:**
+      - Only localhost (127.0.0.1, ::1) can access management endpoints
+      - API key is still required for localhost access
+      
+      **When true:**
+      - Any IP address can access management endpoints with valid key
+      - Useful for remote administration
+      
+      <Warning>
+        Enabling remote access exposes management endpoints to your network. Ensure strong management keys.
+      </Warning>
+    </ParamField>
+    
+    <ParamField path="remote-management.secret-key" type="string" default="(empty)">
+      Management key for administrative access. If a plaintext value is provided, it will be hashed on startup using bcrypt.
+      
+      **Important:**
+      - All management requests require this key (even from localhost)
+      - Leave empty to disable the Management API entirely (404 for all `/v0/management` routes)
+      - Plaintext keys are automatically hashed and persisted back to config file
+      
+      **Example:**
+      ```yaml
+      secret-key: "your-strong-management-password"
+      ```
+      
+      After first startup, this becomes:
+      ```yaml
+      secret-key: "$2a$10$...(bcrypt hash)..."
+      ```
+    </ParamField>
+    
+    <ParamField path="remote-management.disable-control-panel" type="boolean" default="false">
+      Disable the bundled management control panel asset download and HTTP route when true.
+      
+      **When true:**
+      - Management panel UI is not served
+      - API endpoints remain available
+      - Reduces server resources
+    </ParamField>
+    
+    <ParamField path="remote-management.panel-github-repository" type="string" default="https://github.com/router-for-me/Cli-Proxy-API-Management-Center">
+      GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
+      
+      **Default:**
+      ```yaml
+      panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Management API Authentication
+
+Management endpoints require the management key in the `X-Management-Key` header:
+
+```bash
+curl https://your-proxy.com/v0/management/sessions \
+  -H "X-Management-Key: your-management-key"
+```
+
+### Management Endpoints
+
+- `GET /v0/management/sessions` - List OAuth sessions
+- `POST /v0/management/oauth/{provider}` - Initiate OAuth flow
+- `DELETE /v0/management/sessions/{id}` - Revoke session
+- `GET /v0/management/config` - View configuration
+
+## Complete API Keys Example
+
+```yaml
+# Client API Keys
+api-keys:
+  - "team-a-key-abc123"
+  - "team-b-key-def456"
+  - "developer-key-xyz789"
+
+# Authentication Directory
+auth-dir: "~/.cli-proxy-api"
+
+# Management API
+remote-management:
+  allow-remote: false  # localhost only
+  secret-key: "strong-management-password-here"  # will be hashed on startup
+  disable-control-panel: false
+  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
+```
+
+## Per-Client Upstream API Keys (Amp Integration)
+
+When using Amp integration, you can map different client API keys to different upstream Amp accounts:
+
+```yaml
+api-keys:
+  - "team-a-key"
+  - "team-b-key"
+  - "team-c-key"
+
+ampcode:
+  upstream-url: "https://ampcode.com"
+  upstream-api-key: "default-amp-key"  # Fallback for unmapped keys
+  
+  # Map client keys to upstream Amp keys
+  upstream-api-keys:
+    - upstream-api-key: "amp-key-for-team-a"
+      api-keys:
+        - "team-a-key"
+    - upstream-api-key: "amp-key-for-team-b"
+      api-keys:
+        - "team-b-key"
+        - "team-c-key"
+```
+
+<Note>
+  Client keys not listed in `upstream-api-keys` will use the default `upstream-api-key`.
+</Note>
+
+## Best Practices
+
+<Tip>
+  **API Key Security:**
+  - Use long, random strings for API keys (32+ characters)
+  - Rotate API keys periodically
+  - Use different keys for different teams/environments
+  - Never commit API keys to version control
+</Tip>
+
+<Warning>
+  **Management Key Security:**
+  - Use a strong, unique password for the management key
+  - Keep `allow-remote: false` unless remote management is required
+  - Monitor management API access logs
+  - Rotate management keys after personnel changes
+</Warning>
+
+<Note>
+  **Empty Management Key:**
+  
+  Leaving `secret-key` empty disables the Management API entirely:
+  ```yaml
+  remote-management:
+    secret-key: ""  # All /v0/management routes return 404
+  ```
+</Note>
+
+## Key Rotation
+
+To rotate client API keys:
+
+1. Add new keys to the `api-keys` list
+2. Update clients to use new keys
+3. Remove old keys after verification
+
+```yaml
+api-keys:
+  - "new-team-a-key"  # New key
+  - "team-a-key"      # Old key (remove after migration)
+  - "team-b-key"
+```
+
+To rotate the management key:
+
+1. Update `secret-key` with new plaintext password
+2. Restart server (key will be hashed automatically)
+3. Update admin tools with new key

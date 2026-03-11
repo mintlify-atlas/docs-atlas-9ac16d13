@@ -1,122 +1,139 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "CLI Proxy API",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/router-for-me/CLIProxyAPI"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/router-for-me/CLIProxyAPI"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/overview",
+              "concepts/authentication",
+              "concepts/providers",
+              "concepts/routing"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Configuration",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "configuration/server",
+              "configuration/api-keys",
+              "configuration/oauth-providers",
+              "configuration/model-mappings",
+              "configuration/advanced"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "OAuth Authentication",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "oauth/gemini",
+              "oauth/claude",
+              "oauth/codex",
+              "oauth/qwen",
+              "oauth/antigravity",
+              "oauth/iflow"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/amp-cli",
+              "integrations/cursor",
+              "integrations/cline",
+              "integrations/openrouter"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/cloud",
+              "deployment/storage-backends"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "SDK",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Go SDK",
             "pages": [
-              "api-reference/introduction"
+              "sdk/overview",
+              "sdk/getting-started",
+              "sdk/embedding",
+              "sdk/advanced",
+              "sdk/access",
+              "sdk/watcher"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Examples",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "sdk/examples/custom-provider",
+              "sdk/examples/http-request",
+              "sdk/examples/translator"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "OpenAI Compatible",
+            "pages": [
+              "api/openai/chat",
+              "api/openai/models",
+              "api/openai/streaming"
+            ]
+          },
+          {
+            "group": "Management API",
+            "pages": [
+              "api/management/overview",
+              "api/management/config",
+              "api/management/oauth",
+              "api/management/quota",
+              "api/management/logs"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

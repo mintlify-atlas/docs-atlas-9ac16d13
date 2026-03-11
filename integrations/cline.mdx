@@ -1,0 +1,406 @@
+---
+title: 'Cline Integration'
+description: 'Use CLI Proxy API with Cline for autonomous AI coding assistance'
+---
+
+## Overview
+
+Cline (formerly Claude Dev) is a VS Code extension that provides autonomous AI coding assistance. Cline supports OpenAI-compatible API endpoints, allowing you to use CLI Proxy API with your Google/ChatGPT/Claude OAuth subscriptions.
+
+## Configuration
+
+<Steps>
+  <Step title="Install Cline">
+    Install the Cline extension from the VS Code marketplace:
+    
+    1. Open VS Code
+    2. Go to Extensions (Cmd+Shift+X on macOS, Ctrl+Shift+X on Windows/Linux)
+    3. Search for "Cline"
+    4. Click Install
+  </Step>
+  
+  <Step title="Start CLI Proxy API">
+    Ensure CLI Proxy API is running:
+    
+    ```bash
+    ./cliproxyapi
+    ```
+    
+    The server will listen on `http://localhost:8317` by default.
+  </Step>
+  
+  <Step title="Configure Cline API Settings">
+    Open Cline settings in VS Code:
+    
+    1. Open Command Palette (Cmd+Shift+P on macOS, Ctrl+Shift+P on Windows/Linux)
+    2. Type "Cline: Open Settings"
+    3. Select **OpenAI Compatible** as the API provider
+  </Step>
+  
+  <Step title="Set Endpoint and API Key">
+    Configure the connection:
+    
+    - **API Provider**: OpenAI Compatible
+    - **Base URL**: `http://localhost:8317/v1`
+    - **API Key**: Use any key from your `api-keys` list in `config.yaml`
+    - **Model**: Select from available models (e.g., `gemini-2.5-pro`, `claude-sonnet-4`)
+  </Step>
+</Steps>
+
+## Configuration Examples
+
+### Using Gemini OAuth
+
+If you have Gemini CLI OAuth configured:
+
+```json settings.json
+{
+  "cline.apiProvider": "openai-compatible",
+  "cline.baseUrl": "http://localhost:8317/v1",
+  "cline.apiKey": "your-api-key-1",
+  "cline.model": "gemini-2.5-pro"
+}
+```
+
+### Using Claude OAuth
+
+If you have Claude Code OAuth configured:
+
+```json settings.json
+{
+  "cline.apiProvider": "openai-compatible",
+  "cline.baseUrl": "http://localhost:8317/v1",
+  "cline.apiKey": "your-api-key-1",
+  "cline.model": "claude-sonnet-4"
+}
+```
+
+### Using OpenAI Codex
+
+If you have OpenAI Codex OAuth configured:
+
+```json settings.json
+{
+  "cline.apiProvider": "openai-compatible",
+  "cline.baseUrl": "http://localhost:8317/v1",
+  "cline.apiKey": "your-api-key-1",
+  "cline.model": "gpt-5"
+}
+```
+
+## Advanced Configuration
+
+### Multiple API Keys
+
+If you want to use different API keys for different projects:
+
+```yaml config.yaml
+api-keys:
+  - "project-a-key"
+  - "project-b-key"
+  - "personal-key"
+```
+
+Then configure Cline per-project using workspace settings (`.vscode/settings.json`):
+
+```json .vscode/settings.json
+{
+  "cline.apiKey": "project-a-key",
+  "cline.model": "gemini-2.5-pro"
+}
+```
+
+### Model Prefixes
+
+If you have multiple credentials with prefixes:
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    prefix: "work"
+  - api-key: "AIzaSy...02"
+    prefix: "personal"
+```
+
+Use the prefix in your model selection:
+
+```json settings.json
+{
+  "cline.model": "work/gemini-2.5-pro"
+}
+```
+
+### Custom Model Aliases
+
+Create model aliases for easier switching:
+
+```yaml config.yaml
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "cs4.5"
+```
+
+Then in Cline:
+
+```json settings.json
+{
+  "cline.model": "g2.5p"  // Maps to gemini-2.5-pro
+}
+```
+
+## Features
+
+### Autonomous Coding
+
+Cline can autonomously:
+
+- Read and analyze your codebase
+- Create, edit, and delete files
+- Run terminal commands
+- Search for information
+- Debug issues
+
+### Streaming Responses
+
+Cline supports streaming responses through CLI Proxy API:
+
+- Real-time code generation
+- Progressive task execution
+- Instant feedback on actions
+
+### Function Calling
+
+For models that support function calling (Gemini, OpenAI, Claude):
+
+- File system operations
+- Code analysis tools
+- Search and navigation
+- Terminal integration
+
+### Multimodal Support
+
+For models that support images (Gemini, Claude):
+
+- Analyze screenshots
+- Debug UI issues
+- Design reviews
+
+## Workflow Examples
+
+### Example 1: Full-Stack Development
+
+<Steps>
+  <Step title="Configure Cline">
+    ```json settings.json
+    {
+      "cline.baseUrl": "http://localhost:8317/v1",
+      "cline.apiKey": "your-api-key-1",
+      "cline.model": "gemini-2.5-pro"
+    }
+    ```
+  </Step>
+  
+  <Step title="Give Cline a Task">
+    Open Cline panel and type:
+    
+    ```
+    Create a REST API with Express.js that has CRUD endpoints for a task management system
+    ```
+  </Step>
+  
+  <Step title="Review and Approve">
+    Cline will:
+    - Create necessary files
+    - Write the code
+    - Ask for approval before executing commands
+  </Step>
+  
+  <Step title="Test and Iterate">
+    Continue the conversation:
+    
+    ```
+    Add input validation and error handling
+    ```
+  </Step>
+</Steps>
+
+### Example 2: Bug Fixing
+
+<Steps>
+  <Step title="Select Claude Model">
+    ```json settings.json
+    {
+      "cline.model": "claude-sonnet-4"
+    }
+    ```
+  </Step>
+  
+  <Step title="Describe the Bug">
+    ```
+    The user authentication is failing with a 401 error. 
+    Check the auth middleware and fix the issue.
+    ```
+  </Step>
+  
+  <Step title="Let Cline Investigate">
+    Cline will:
+    - Read relevant files
+    - Analyze the code
+    - Propose fixes
+    - Execute tests
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Connection Errors
+
+If Cline shows connection errors:
+
+1. Verify CLI Proxy API is running:
+   
+   ```bash
+   curl http://localhost:8317/v1/models
+   ```
+
+2. Check the Base URL in Cline settings matches your config
+3. Ensure no firewall is blocking localhost connections
+
+### Authentication Failures
+
+If you see "Invalid API key" or authentication errors:
+
+1. Verify the API key in Cline matches one in your `config.yaml`:
+   
+   ```yaml config.yaml
+   api-keys:
+     - "your-api-key-1"
+   ```
+
+2. Check for whitespace or special characters
+3. Restart CLI Proxy API after config changes
+
+### Model Not Available
+
+If Cline can't use a specific model:
+
+1. Authenticate with the provider first:
+   
+   ```bash
+   ./cliproxyapi gemini login
+   ./cliproxyapi claude login
+   ```
+
+2. Verify the model is listed:
+   
+   ```bash
+   curl -H "Authorization: Bearer your-api-key-1" \
+     http://localhost:8317/v1/models | jq '.data[].id'
+   ```
+
+3. Check provider configuration in `config.yaml`
+
+### Slow Responses
+
+If responses are slower than expected:
+
+1. Check your network connection to OAuth providers
+2. Enable debug logging to see timing info:
+   
+   ```yaml config.yaml
+   debug: true
+   ```
+
+3. Consider using faster models (e.g., `gemini-2.5-flash` instead of `gemini-2.5-pro`)
+4. Configure multiple accounts for load balancing
+
+## Best Practices
+
+### 1. Choose the Right Model
+
+- **Quick tasks**: `gemini-2.5-flash`, `claude-haiku-4`
+- **Complex reasoning**: `gemini-2.5-pro`, `claude-sonnet-4`
+- **Maximum capability**: `claude-opus-4`, `gpt-5`
+
+### 2. Use Workspace Settings
+
+Create project-specific settings in `.vscode/settings.json`:
+
+```json .vscode/settings.json
+{
+  "cline.apiKey": "project-specific-key",
+  "cline.model": "gemini-2.5-pro"
+}
+```
+
+### 3. Configure Multiple Providers
+
+Authenticate with multiple providers for redundancy:
+
+```bash
+./cliproxyapi gemini login
+./cliproxyapi claude login
+./cliproxyapi codex login
+```
+
+### 4. Enable Load Balancing
+
+```yaml config.yaml
+routing:
+  strategy: "round-robin"
+  
+max-retry-credentials: 3
+```
+
+### 5. Monitor Usage
+
+```yaml config.yaml
+usage-statistics-enabled: true
+```
+
+Then check usage via Management API or logs.
+
+## Performance Optimization
+
+### Reduce Latency
+
+```yaml config.yaml
+# Enable streaming for faster first-token response
+streaming:
+  keepalive-seconds: 15
+  bootstrap-retries: 1
+```
+
+### Handle Rate Limits
+
+```yaml config.yaml
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+  
+max-retry-credentials: 3
+max-retry-interval: 30
+```
+
+### Optimize for Concurrent Requests
+
+```yaml config.yaml
+# Enable commercial mode for high-concurrency environments
+commercial-mode: true
+
+# Configure multiple accounts
+gemini-api-key:
+  - api-key: "key1"
+  - api-key: "key2"
+  - api-key: "key3"
+```
+
+## See Also
+
+- [Cursor Integration](/integrations/cursor) - Similar IDE integration
+- [Amp CLI Integration](/integrations/amp-cli) - Advanced routing with Amp CLI
+- [OpenRouter Integration](/integrations/openrouter) - Add custom model providers

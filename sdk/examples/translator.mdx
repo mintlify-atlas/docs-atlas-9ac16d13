@@ -1,0 +1,285 @@
+---
+title: Translator Example
+description: Learn how to use the translator package to convert requests and responses between different AI provider formats
+---
+
+## Overview
+
+This example demonstrates how to use the CLI Proxy API translator package to transform requests and responses between different AI provider formats. The translator system enables clients using one API format (e.g., OpenAI) to communicate with providers that use different formats (e.g., Gemini, Claude, etc.).
+
+## Use Case
+
+Use the translator package when you need to:
+
+- Convert OpenAI-formatted requests to provider-specific formats
+- Transform provider responses back to OpenAI format for clients
+- Support multiple providers with a unified client interface
+- Test format transformations during development
+- Build custom translators for new providers
+
+## Complete Source Code
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+	_ "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator/builtin"
+)
+
+func main() {
+	rawRequest := []byte(`{"messages":[{"content":[{"text":"Hello! Gemini","type":"text"}],"role":"user"}],"model":"gemini-2.5-pro","stream":false}`)
+	fmt.Println("Has gemini->openai response translator:", translator.HasResponseTransformerByFormatName(
+		translator.FormatGemini,
+		translator.FormatOpenAI,
+	))
+
+	translatedRequest := translator.TranslateRequestByFormatName(
+		translator.FormatOpenAI,
+		translator.FormatGemini,
+		"gemini-2.5-pro",
+		rawRequest,
+		false,
+	)
+
+	fmt.Printf("Translated request to Gemini format:\n%s\n\n", translatedRequest)
+
+	claudeResponse := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"Okay, here's what's going through my mind. I need to schedule a meeting"},{"thoughtSignature":"","functionCall":{"name":"schedule_meeting","args":{"topic":"Q3 planning","attendees":["Bob","Alice"],"time":"10:00","date":"2025-03-27"}}}]},"finishReason":"STOP","avgLogprobs":-0.50018133435930523}],"usageMetadata":{"promptTokenCount":117,"candidatesTokenCount":28,"totalTokenCount":474,"trafficType":"PROVISIONED_THROUGHPUT","promptTokensDetails":[{"modality":"TEXT","tokenCount":117}],"candidatesTokensDetails":[{"modality":"TEXT","tokenCount":28}],"thoughtsTokenCount":329},"modelVersion":"gemini-2.5-pro","createTime":"2025-08-15T04:12:55.249090Z","responseId":"x7OeaIKaD6CU48APvNXDyA4"}`)
+
+	convertedResponse := translator.TranslateNonStreamByFormatName(
+		context.Background(),
+		translator.FormatGemini,
+		translator.FormatOpenAI,
+		"gemini-2.5-pro",
+		rawRequest,
+		translatedRequest,
+		claudeResponse,
+		nil,
+	)
+
+	fmt.Printf("Converted response for OpenAI clients:\n%s\n", convertedResponse)
+}
+```
+
+## Key Concepts
+
+### 1. Built-in Translators
+
+The SDK includes built-in translators for popular AI providers. Import the builtin package to access them:
+
+```go
+import _ "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator/builtin"
+```
+
+This blank import registers translators for:
+- OpenAI
+- Anthropic (Claude)
+- Google (Gemini)
+- And other supported providers
+
+### 2. Format Constants
+
+The translator package provides format constants for common providers:
+
+- `translator.FormatOpenAI` - OpenAI chat completion format
+- `translator.FormatGemini` - Google Gemini format
+- `translator.FormatClaude` - Anthropic Claude format
+- And others
+
+### 3. Checking Translator Availability
+
+Before translating, you can check if a translator exists for a format pair:
+
+```go
+hasTranslator := translator.HasResponseTransformerByFormatName(
+    translator.FormatGemini,
+    translator.FormatOpenAI,
+)
+```
+
+### 4. Request Translation
+
+Transform a request from one format to another:
+
+```go
+translatedRequest := translator.TranslateRequestByFormatName(
+    sourceFormat,      // e.g., translator.FormatOpenAI
+    targetFormat,      // e.g., translator.FormatGemini
+    model,             // Model name
+    requestBytes,      // Original request as []byte
+    stream,            // Whether this is a streaming request
+)
+```
+
+### 5. Response Translation
+
+Transform a provider's response back to the client's expected format:
+
+#### Non-Streaming Responses
+
+```go
+convertedResponse := translator.TranslateNonStreamByFormatName(
+    ctx,
+    sourceFormat,      // Provider's format (e.g., translator.FormatGemini)
+    targetFormat,      // Client's format (e.g., translator.FormatOpenAI)
+    model,
+    originalRequest,   // Original request from client
+    translatedRequest, // Request that was sent to provider
+    rawResponse,       // Response from provider
+    param,             // Optional parameter (usually nil)
+)
+```
+
+#### Streaming Responses
+
+For streaming responses, use `TranslateStreamByFormatName` which returns a channel of translated chunks.
+
+## How to Run
+
+1. Run the example:
+
+```bash
+go run main.go
+```
+
+2. The example will:
+   - Check if a Gemini-to-OpenAI translator exists
+   - Translate an OpenAI request to Gemini format
+   - Transform a Gemini response back to OpenAI format
+   - Print the results
+
+## Example Flow
+
+This example demonstrates a complete translation flow:
+
+### Step 1: Original OpenAI Request
+
+```json
+{
+  "messages": [
+    {
+      "content": [{"text": "Hello! Gemini", "type": "text"}],
+      "role": "user"
+    }
+  ],
+  "model": "gemini-2.5-pro",
+  "stream": false
+}
+```
+
+### Step 2: Translated to Gemini Format
+
+The translator converts the OpenAI format to Gemini's native format, adjusting field names, structure, and conventions.
+
+### Step 3: Gemini Response
+
+The provider returns a response in Gemini format with features like thoughts and function calls:
+
+```json
+{
+  "candidates": [{
+    "content": {
+      "role": "model",
+      "parts": [
+        {"thought": true, "text": "Okay, here's what's going through my mind..."},
+        {"functionCall": {"name": "schedule_meeting", ...}}
+      ]
+    },
+    "finishReason": "STOP"
+  }],
+  "usageMetadata": {...}
+}
+```
+
+### Step 4: Converted to OpenAI Format
+
+The translator converts the response back to OpenAI format that clients expect:
+
+```json
+{
+  "id": "...",
+  "object": "chat.completion",
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "...",
+      "tool_calls": [{...}]
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {...}
+}
+```
+
+## Supported Translations
+
+The built-in translators support bidirectional translation between:
+
+- OpenAI ↔ Gemini
+- OpenAI ↔ Claude
+- OpenAI ↔ Cohere
+- OpenAI ↔ Mistral
+- And other provider combinations
+
+## Custom Translators
+
+You can register custom translators for new providers or custom formats. See the [Custom Provider Example](/sdk/examples/custom-provider) for how to register translators using `translator.Register()`.
+
+### Basic Registration
+
+```go
+import "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+
+func init() {
+    translator.Register(
+        sourceFormat,
+        targetFormat,
+        requestTransformFunc,
+        responseTransform,
+    )
+}
+```
+
+## Advanced Features
+
+### Context-Aware Translation
+
+The translator can access both the original request and translated request during response translation, allowing for context-aware transformations:
+
+```go
+convertedResponse := translator.TranslateNonStreamByFormatName(
+    ctx,
+    sourceFormat,
+    targetFormat,
+    model,
+    originalRequest,   // Can be used to preserve client preferences
+    translatedRequest, // Can be used to understand what was sent
+    rawResponse,
+    param,
+)
+```
+
+### Parameter Passing
+
+The optional `param` parameter allows passing additional data through the translation pipeline, useful for:
+
+- Custom metadata
+- Feature flags
+- Provider-specific options
+
+## Error Handling
+
+If a translator doesn't exist for a format pair:
+
+- `TranslateRequestByFormatName` returns the original request unchanged
+- `TranslateNonStreamByFormatName` returns the raw response unchanged
+- Use `HasResponseTransformerByFormatName` to check availability before translating
+
+## Related Documentation
+
+- [Custom Provider Example](/sdk/examples/custom-provider) - Shows how to register custom translators
+- [SDK Advanced](/sdk/advanced) - Detailed translator API documentation
+- [SDK Advanced](/sdk/advanced) - Supported provider formats

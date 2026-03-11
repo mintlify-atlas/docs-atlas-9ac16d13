@@ -1,0 +1,372 @@
+---
+title: 'Antigravity OAuth'
+description: 'Authenticate with Antigravity using OAuth 2.0'
+---
+
+## Overview
+
+Antigravity authentication enables access to Antigravity's AI services through OAuth 2.0. The CLI Proxy API handles the complete OAuth flow with automatic project discovery and token management.
+
+## Prerequisites
+
+Before authenticating with Antigravity, ensure you have:
+
+- An Antigravity account with API access
+- CLIProxyAPI server installed and configured
+- A web browser for OAuth authentication (or use `-no-browser` flag)
+- Network access to Antigravity's authentication servers
+
+## Authentication
+
+<Steps>
+  <Step title="Start the login process">
+    Run the following command to initiate Antigravity OAuth:
+
+    ```bash
+    ./CLIProxyAPI -antigravity-login
+    ```
+
+    This will:
+    - Start a local OAuth callback server
+    - Open your default web browser automatically
+    - Navigate to Antigravity's OAuth authorization page
+  </Step>
+
+  <Step title="Complete OAuth authorization">
+    In the browser window:
+    1. Sign in to your Antigravity account
+    2. Review the requested permissions
+    3. Click "Authorize" or "Allow" to grant access
+    4. Wait for the automatic redirect to the callback server
+  </Step>
+
+  <Step title="Automatic project discovery">
+    After OAuth completes, the CLI automatically:
+    - Exchanges the authorization code for access tokens
+    - Discovers your Antigravity project ID
+    - Saves tokens and project metadata
+    - Displays your authenticated account label
+  </Step>
+
+  <Step title="Confirmation">
+    After successful authentication:
+
+    ```
+    Authentication saved to /path/to/auth/antigravity-<identifier>.json
+    Authenticated as <your-account-label>
+    Antigravity authentication successful!
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Antigravity authentication includes automatic project ID discovery, similar to Google Gemini's auto-discovery mode. No manual project selection is required.
+</Note>
+
+## Advanced Options
+
+### Manual Browser Authentication
+
+If you're on a headless server or the browser doesn't open automatically:
+
+```bash
+./CLIProxyAPI -antigravity-login -no-browser
+```
+
+The CLI will display:
+```
+Please visit this URL to authenticate:
+https://antigravity.example.com/oauth/authorize?client_id=...
+```
+
+Open the URL manually in a browser on any device and complete the OAuth flow.
+
+### Custom OAuth Callback Port
+
+To use a specific port for the OAuth callback server:
+
+```bash
+./CLIProxyAPI -antigravity-login -oauth-callback-port 9000
+```
+
+<Tip>
+Use a custom callback port if:
+- The default port is already in use
+- Your firewall blocks the default port
+- You're running multiple CLI instances
+- You need to match specific network policies
+</Tip>
+
+### Combined Options
+
+You can combine flags for specific scenarios:
+
+```bash
+# Headless server with custom port
+./CLIProxyAPI -antigravity-login -no-browser -oauth-callback-port 8888
+```
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Set via `-auth-dir` flag or in config file
+- Filename format: `antigravity-<identifier>-<timestamp>.json`
+- Example: `antigravity-user-1234567890.json`
+
+### Token Contents
+
+The stored token file contains:
+- OAuth 2.0 access token
+- Refresh token (if provided by Antigravity)
+- Token type and expiration timestamp
+- Account identifier/label
+- Auto-discovered project ID
+- Authentication metadata
+
+### Project ID Discovery
+
+Antigravity authentication automatically discovers your project ID:
+
+- No manual project selection required
+- Similar to Gemini's Google One mode
+- Project ID is fetched from your account metadata
+- Stored in the token file for future use
+
+This streamlines the authentication process compared to providers requiring manual project configuration.
+
+### Multiple Accounts
+
+You can authenticate with multiple Antigravity accounts:
+
+```bash
+# First account
+./CLIProxyAPI -antigravity-login
+
+# Second account (after first completes)
+./CLIProxyAPI -antigravity-login
+```
+
+Each account:
+- Creates a separate token file
+- Has its own project ID
+- Is automatically loaded by the server
+- Participates in credential rotation
+
+Benefits of multiple accounts:
+- Higher effective rate limits
+- Load balancing across credentials
+- Redundancy if one account has issues
+- Separate billing/usage tracking
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/antigravity-*.json
+    ```
+
+    You should see your Antigravity token file(s) listed.
+  </Step>
+
+  <Step title="Verify account label">
+    During authentication, note the account label displayed:
+    ```
+    Authenticated as <your-account-label>
+    ```
+
+    This confirms which Antigravity account was authenticated.
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    The server will:
+    - Automatically discover Antigravity token files
+    - Load credentials into the credential pool
+    - Log successful credential registration
+  </Step>
+
+  <Step title="Make a test API request">
+    Send a request to test Antigravity access:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "antigravity-model",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Browser doesn't open automatically
+
+**Solution:** Use the `-no-browser` flag:
+```bash
+./CLIProxyAPI -antigravity-login -no-browser
+```
+
+Then manually open the displayed URL in your browser.
+
+### OAuth callback timeout
+
+**Cause:** Authorization wasn't completed within the timeout period.
+
+**Solution:**
+- Complete the OAuth flow more quickly
+- Check if your firewall blocks the callback port
+- Ensure localhost/127.0.0.1 is accessible
+- Try a different callback port with `-oauth-callback-port`
+
+### "Authentication failed" error
+
+**Possible causes:**
+- Invalid authorization code
+- Network connectivity issues
+- Antigravity service outage
+- Account permissions insufficient
+
+**Solution:**
+1. Check your network connection
+2. Verify Antigravity services are operational
+3. Ensure your account has API access enabled
+4. Try authenticating again
+5. Check server logs for detailed error messages
+
+### Project ID discovery failed
+
+**Cause:** Unable to fetch project ID from Antigravity.
+
+**Solution:**
+- Verify your account is properly set up
+- Check if your account has projects configured
+- Contact Antigravity support if the issue persists
+- Review server logs for specific error details
+
+### Port already in use
+
+**Cause:** The OAuth callback port is occupied by another service.
+
+**Solution:** Use a custom callback port:
+```bash
+./CLIProxyAPI -antigravity-login -oauth-callback-port 9001
+```
+
+### Token not saving
+
+**Cause:** Permission issues with the auth directory.
+
+**Solution:**
+```bash
+# Create directory if missing
+mkdir -p /path/to/auth-dir
+
+# Fix permissions
+chmod 755 /path/to/auth-dir
+
+# Verify writable
+touch /path/to/auth-dir/test && rm /path/to/auth-dir/test
+```
+
+### Wrong account authenticated
+
+**Cause:** Signed into different Antigravity account in browser.
+
+**Solution:**
+1. Sign out of the current account in your browser
+2. Clear browser cookies for Antigravity
+3. Run `-antigravity-login` again
+4. Sign in with the correct account
+5. Complete authorization
+
+### Account label not displayed
+
+**Cause:** Account metadata not available in OAuth response.
+
+**Solution:**
+- This is informational only - authentication still works
+- Check the token file for account identifier
+- Contact Antigravity support if you need label customization
+
+## Token Refresh
+
+Antigravity tokens are automatically refreshed by the server:
+
+- The server monitors token expiration timestamps
+- Refresh tokens (if provided) are used to obtain new access tokens
+- Refreshed tokens are saved back to the auth directory
+- No manual intervention required
+
+If refresh fails:
+- Check server logs for specific errors
+- Ensure network connectivity to Antigravity
+- Re-authenticate if tokens are invalid or expired
+
+## Re-authentication
+
+To re-authenticate an Antigravity account:
+
+1. Delete the existing token file:
+   ```bash
+   rm /path/to/auth-dir/antigravity-*.json
+   ```
+
+2. Run the login command again:
+   ```bash
+   ./CLIProxyAPI -antigravity-login
+   ```
+
+3. Complete the OAuth flow again
+4. New tokens and project ID will be saved
+
+<Tip>
+Re-authentication is useful when:
+- Tokens expire and can't be refreshed
+- You need to update permissions
+- Your Antigravity account changes
+- You want to switch to a different account
+</Tip>
+
+## Security Best Practices
+
+- **Never share token files** - They contain full account access credentials
+- **Use restrictive permissions** - Keep auth directory at `755` and token files at `600`
+- **Rotate credentials regularly** - Re-authenticate periodically for security
+- **Monitor usage** - Check server logs for unusual authentication activity
+- **Secure your auth directory** - Back up tokens securely, encrypt if storing remotely
+- **Validate OAuth redirects** - Don't manually modify OAuth URLs or parameters
+
+<Warning>
+Your Antigravity token files provide full access to your account and API services. Protect them as you would passwords or API keys.
+</Warning>
+
+## Project Management
+
+Unlike other providers, Antigravity handles project management automatically:
+
+- **No manual selection** - Project ID is auto-discovered
+- **Single project per account** - Each authenticated account has one project
+- **Automatic association** - Project ID is linked to your account
+- **Transparent to users** - No project configuration needed
+
+If you need to use a different project:
+1. Create/switch to a different Antigravity account
+2. Authenticate that account separately
+3. Each account brings its own project
+
+## Related Resources
+
+- [Antigravity API Documentation](https://docs.antigravity.example.com/)
+- [OAuth 2.0 Specification](https://oauth.net/2/)
+- [Configuration Guide](/configuration/server)

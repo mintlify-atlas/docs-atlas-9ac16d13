@@ -1,0 +1,230 @@
+---
+title: 'Amp CLI Integration'
+description: 'Use your Google/ChatGPT/Claude OAuth subscriptions with Amp coding tools'
+---
+
+## Overview
+
+CLI Proxy API includes integrated support for [Amp CLI](https://ampcode.com) and Amp IDE extensions, enabling you to use your existing Google/ChatGPT/Claude OAuth subscriptions with Amp's coding tools.
+
+### Key Features
+
+- **Provider route aliases** for Amp's API patterns (`/api/provider/{provider}/v1...`)
+- **Management proxy** for OAuth authentication and account features
+- **Smart model fallback** with automatic routing
+- **Model mapping** to route unavailable models to alternatives (e.g., `claude-opus-4.5` → `claude-sonnet-4`)
+- **Per-client upstream routing** for multi-tenant deployments
+- **Security-first design** with localhost-only management endpoints
+
+## Configuration
+
+### Basic Setup
+
+Add the `ampcode` section to your `config.yaml`:
+
+```yaml config.yaml
+ampcode:
+  # Configure upstream URL for Amp CLI OAuth and management features
+  upstream-url: "https://ampcode.com"
+  
+  # Optional: Override API key for Amp upstream (otherwise uses env or file)
+  upstream-api-key: ""
+  
+  # Restrict Amp management routes (/api/auth, /api/user, etc.) to localhost only
+  restrict-management-to-localhost: false
+```
+
+### Model Mappings
+
+Route unavailable Amp models to alternative models available in your local proxy. This is useful when Amp CLI requests models you don't have access to (e.g., Claude Opus 4.5) but you have a similar model available (e.g., Claude Sonnet 4).
+
+```yaml config.yaml
+ampcode:
+  upstream-url: "https://ampcode.com"
+  
+  # Model Mappings
+  # Route unavailable Amp models to alternative models available in your local proxy
+  model-mappings:
+    - from: "claude-opus-4-5-20251101"          # Model requested by Amp CLI
+      to: "gemini-claude-opus-4-5-thinking"     # Route to this available model instead
+    - from: "claude-sonnet-4-5-20250929"
+      to: "gemini-claude-sonnet-4-5-thinking"
+    - from: "claude-haiku-4-5-20251001"
+      to: "gemini-2.5-flash"
+  
+  # Force model mappings to run before checking local API keys (default: false)
+  force-model-mappings: false
+```
+
+**How it works:**
+
+1. Amp CLI requests a model (e.g., `claude-opus-4-5-20251101`)
+2. If the model isn't available locally, CLI Proxy API checks for a mapping
+3. If a mapping exists and the target model has providers, the request is routed to the target model
+4. If no mapping exists or the target model is unavailable, the request falls back to the Amp upstream
+
+### Per-Client Upstream Routing
+
+For multi-tenant deployments, you can map different client API keys to different Amp upstream API keys:
+
+```yaml config.yaml
+ampcode:
+  upstream-url: "https://ampcode.com"
+  
+  # Default upstream API key (fallback for unmapped clients)
+  upstream-api-key: "default_amp_key"
+  
+  # Per-client upstream API key mapping
+  # Maps client API keys (from top-level api-keys) to different Amp upstream API keys
+  upstream-api-keys:
+    - upstream-api-key: "amp_key_for_team_a"    # Upstream key to use for these clients
+      api-keys:                                 # Client keys that use this upstream key
+        - "your-api-key-1"
+        - "your-api-key-2"
+    - upstream-api-key: "amp_key_for_team_b"
+      api-keys:
+        - "your-api-key-3"
+```
+
+## Management Proxy Routes
+
+The following routes are proxied to the Amp upstream for OAuth authentication and account management:
+
+- `/api/auth/*` - OAuth authentication flows
+- `/api/user/*` - User profile and settings
+- `/api/internal/*` - Internal Amp features
+- `/api/meta/*` - Metadata endpoints
+- `/api/threads/*` - Thread management
+- `/api/telemetry/*` - Telemetry data
+- `/api/otel/*` - OpenTelemetry integration
+- `/api/tab/*` - Tab management
+- `/threads`, `/threads/*` - Thread views (root-level)
+- `/docs`, `/docs/*` - Documentation (root-level)
+- `/settings`, `/settings/*` - Settings UI (root-level)
+- `/auth`, `/auth/*` - Auth flows (root-level)
+
+### Security
+
+<Warning>
+  Management routes require a valid API key in the `Authorization` header. When `restrict-management-to-localhost: true` is enabled, these routes are only accessible from localhost (127.0.0.1 or ::1).
+</Warning>
+
+## Provider Routes
+
+Amp CLI uses provider-specific routes. CLI Proxy API automatically translates these to your local providers:
+
+### OpenAI/Codex
+
+```bash
+# Amp CLI format
+POST /api/provider/openai/v1/chat/completions
+
+# Routed to your local OpenAI OAuth or API key providers
+```
+
+### Anthropic/Claude
+
+```bash
+# Amp CLI format
+POST /api/provider/anthropic/v1/messages
+
+# Routed to your local Claude OAuth or API key providers
+```
+
+### Google/Gemini
+
+```bash
+# Amp CLI format
+POST /api/provider/google/v1beta/models/gemini-2.5-pro:generateContent
+
+# Routed to your local Gemini OAuth or API key providers
+```
+
+## Example Setup
+
+<Steps>
+  <Step title="Configure CLI Proxy API">
+    Add the `ampcode` section to your `config.yaml`:
+    
+    ```yaml config.yaml
+    ampcode:
+      upstream-url: "https://ampcode.com"
+      restrict-management-to-localhost: true
+      model-mappings:
+        - from: "claude-opus-4-5-20251101"
+          to: "claude-sonnet-4"
+    ```
+  </Step>
+  
+  <Step title="Start CLI Proxy API">
+    ```bash
+    ./cliproxyapi
+    ```
+    
+    The server will listen on `http://localhost:8317` by default.
+  </Step>
+  
+  <Step title="Configure Amp CLI">
+    Point Amp CLI to your local proxy endpoint:
+    
+    ```bash
+    # Set the API base URL
+    export AMP_API_URL=http://localhost:8317
+    ```
+  </Step>
+  
+  <Step title="Authenticate with Amp">
+    Use Amp CLI's normal authentication flow. OAuth requests will be proxied through CLI Proxy API to `ampcode.com`.
+    
+    ```bash
+    amp login
+    ```
+  </Step>
+  
+  <Step title="Start coding">
+    Amp CLI will now use your local Google/ChatGPT/Claude OAuth subscriptions through CLI Proxy API:
+    
+    ```bash
+    amp chat "Write a function to calculate fibonacci numbers"
+    ```
+  </Step>
+</Steps>
+
+## Hot-Reload Support
+
+The following configuration options support hot-reload without restarting the server:
+
+- `model-mappings` - Update model routing rules
+- `upstream-api-key` - Change the default upstream API key
+- `upstream-api-keys` - Update per-client upstream key mappings
+- `upstream-url` - Change the upstream URL
+- `restrict-management-to-localhost` - Toggle localhost restriction
+
+Simply update your `config.yaml` and the changes will be applied automatically.
+
+## Troubleshooting
+
+### Model not found errors
+
+If Amp requests a model that's not available locally:
+
+1. Check if you have the provider configured (OAuth or API key)
+2. Add a model mapping to route to an available alternative
+3. Ensure the target model in your mapping has available providers
+
+### OAuth authentication fails
+
+If OAuth authentication doesn't work:
+
+1. Verify `upstream-url` is set correctly
+2. Check that management routes are accessible (not blocked by firewall)
+3. If using `restrict-management-to-localhost: true`, ensure you're accessing from localhost
+
+### Fallback to upstream
+
+If requests are falling back to the Amp upstream when you expect local routing:
+
+1. Enable debug logging: `debug: true` in `config.yaml`
+2. Check logs for "amp model mapping" messages
+3. Verify your model mappings are configured correctly
+4. Ensure the target model has available providers

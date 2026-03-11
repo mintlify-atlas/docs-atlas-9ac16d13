@@ -1,0 +1,249 @@
+---
+title: 'Cursor IDE Integration'
+description: 'Use CLI Proxy API with Cursor IDE for AI-powered coding'
+---
+
+## Overview
+
+Cursor IDE is an AI-powered code editor that supports OpenAI-compatible API endpoints. You can configure Cursor to use CLI Proxy API as a custom model provider, giving you access to Google/ChatGPT/Claude OAuth subscriptions through Cursor's interface.
+
+## Configuration
+
+<Steps>
+  <Step title="Start CLI Proxy API">
+    Ensure CLI Proxy API is running:
+    
+    ```bash
+    ./cliproxyapi
+    ```
+    
+    The server will listen on `http://localhost:8317` by default.
+  </Step>
+  
+  <Step title="Open Cursor Settings">
+    In Cursor IDE:
+    
+    1. Open Settings (Cmd+, on macOS, Ctrl+, on Windows/Linux)
+    2. Navigate to **Models** → **OpenAI API Key**
+  </Step>
+  
+  <Step title="Configure API Endpoint">
+    Set up the custom API endpoint:
+    
+    - **API Key**: Use any key from your `api-keys` list in `config.yaml`
+    - **Base URL**: `http://localhost:8317/v1`
+    
+    Example:
+    
+    ```
+    API Key: your-api-key-1
+    Base URL: http://localhost:8317/v1
+    ```
+  </Step>
+  
+  <Step title="Select Models">
+    In the Cursor chat interface, you can now select models from your CLI Proxy API providers:
+    
+    - **Gemini models**: `gemini-2.5-pro`, `gemini-2.5-flash`, etc.
+    - **Claude models**: `claude-sonnet-4`, `claude-opus-4`, etc.
+    - **OpenAI models**: `gpt-5`, `gpt-5-mini`, etc.
+    - **Custom models**: Any models from your OpenAI-compatible providers
+  </Step>
+</Steps>
+
+## Configuration Examples
+
+### Using Gemini OAuth
+
+If you have Gemini CLI OAuth configured:
+
+```yaml config.yaml
+# Authenticate with Gemini CLI first
+# Then configure in Cursor:
+# Base URL: http://localhost:8317/v1
+# API Key: your-api-key-1
+# Model: gemini-2.5-pro
+```
+
+### Using Claude OAuth
+
+If you have Claude Code OAuth configured:
+
+```yaml config.yaml
+# Authenticate with Claude Code first
+# Then configure in Cursor:
+# Base URL: http://localhost:8317/v1
+# API Key: your-api-key-1
+# Model: claude-sonnet-4
+```
+
+### Using Multiple Providers
+
+You can switch between different providers by changing the model selection in Cursor:
+
+```yaml config.yaml
+# Configure multiple OAuth providers in CLI Proxy API
+# Then in Cursor, switch models:
+# - gemini-2.5-pro (uses Gemini OAuth)
+# - claude-sonnet-4 (uses Claude OAuth)
+# - gpt-5 (uses OpenAI Codex OAuth)
+```
+
+## Advanced Configuration
+
+### Model Prefixes
+
+If you have multiple credentials with prefixes:
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    prefix: "work"
+  - api-key: "AIzaSy...02"
+    prefix: "personal"
+```
+
+Use the prefix in your model selection:
+
+```
+Model: work/gemini-2.5-pro
+Model: personal/gemini-2.5-pro
+```
+
+### Custom Endpoints
+
+For HTTPS or custom ports:
+
+```yaml config.yaml
+# config.yaml
+host: "0.0.0.0"
+port: 8443
+tls:
+  enable: true
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+```
+
+Then in Cursor:
+
+```
+Base URL: https://localhost:8443/v1
+```
+
+## Features
+
+### Streaming Responses
+
+Cursor supports streaming responses, which work seamlessly with CLI Proxy API:
+
+- Real-time code generation
+- Progressive responses for chat
+- Instant feedback on AI suggestions
+
+### Function Calling
+
+If your selected model supports function calling (e.g., Gemini, OpenAI), Cursor can leverage this for:
+
+- Code analysis
+- File operations
+- Terminal commands
+
+### Multimodal Input
+
+For models that support images (e.g., Gemini, Claude):
+
+- Attach screenshots to chat
+- Analyze UI designs
+- Debug visual issues
+
+## Troubleshooting
+
+### Connection Refused
+
+If Cursor shows "Connection refused":
+
+1. Verify CLI Proxy API is running: `curl http://localhost:8317/v1/models`
+2. Check the port in your config matches the Base URL
+3. Ensure no firewall is blocking localhost connections
+
+### Invalid API Key
+
+If you see "Invalid API key":
+
+1. Verify the API key exists in your `config.yaml` under `api-keys`
+2. Check for leading/trailing whitespace
+3. Restart CLI Proxy API after config changes
+
+### Model Not Available
+
+If a model doesn't appear in Cursor:
+
+1. Authenticate with the provider first (e.g., `cliproxyapi gemini login`)
+2. Verify the provider is configured correctly
+3. Check `/v1/models` endpoint to see available models:
+   
+   ```bash
+   curl -H "Authorization: Bearer your-api-key-1" \
+     http://localhost:8317/v1/models
+   ```
+
+### Rate Limiting
+
+If you hit rate limits:
+
+1. Configure multiple accounts for round-robin load balancing
+2. Use the `routing.strategy` option in `config.yaml`:
+   
+   ```yaml config.yaml
+   routing:
+     strategy: "round-robin"  # or "fill-first"
+   ```
+
+## Best Practices
+
+1. **Use OAuth providers** when possible for better quota limits
+2. **Configure multiple accounts** for load balancing
+3. **Enable debug logging** during initial setup: `debug: true`
+4. **Use HTTPS** in production environments with TLS certificates
+5. **Restrict API keys** by using different keys for different projects
+
+## Example Workflow
+
+<Steps>
+  <Step title="Authenticate Providers">
+    ```bash
+    # Authenticate with your preferred providers
+    ./cliproxyapi gemini login
+    ./cliproxyapi claude login
+    ./cliproxyapi codex login
+    ```
+  </Step>
+  
+  <Step title="Verify Models">
+    ```bash
+    # Check available models
+    curl -H "Authorization: Bearer your-api-key-1" \
+      http://localhost:8317/v1/models | jq '.data[].id'
+    ```
+  </Step>
+  
+  <Step title="Configure Cursor">
+    - Base URL: `http://localhost:8317/v1`
+    - API Key: `your-api-key-1`
+    - Model: `gemini-2.5-pro` (or any available model)
+  </Step>
+  
+  <Step title="Start Coding">
+    Use Cursor's AI features:
+    
+    - **Cmd+K**: Inline code generation
+    - **Cmd+L**: Chat with AI
+    - **Cmd+I**: AI-powered autocomplete
+  </Step>
+</Steps>
+
+## See Also
+
+- [Cline Integration](/integrations/cline) - Another VS Code extension that works with CLI Proxy API
+- [OpenRouter Integration](/integrations/openrouter) - Add custom OpenAI-compatible providers
+- [Amp CLI Integration](/integrations/amp-cli) - Use Amp CLI with your OAuth subscriptions

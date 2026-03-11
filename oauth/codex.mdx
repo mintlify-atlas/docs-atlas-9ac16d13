@@ -1,0 +1,375 @@
+---
+title: 'OpenAI Codex OAuth'
+description: 'Authenticate with OpenAI Codex using OAuth 2.0 or device code flow'
+---
+
+## Overview
+
+OpenAI Codex authentication provides access to OpenAI's code completion models and services. The CLI Proxy API supports two authentication methods:
+
+1. **OAuth 2.0 Flow** - Browser-based authentication with callback
+2. **Device Code Flow** - No browser required, ideal for headless servers
+
+Both methods use PKCE (Proof Key for Code Exchange) for enhanced security.
+
+## Prerequisites
+
+Before authenticating with Codex, ensure you have:
+
+- An OpenAI account with Codex access
+- CLIProxyAPI server installed and configured
+- For OAuth flow: A web browser
+- For device flow: No browser required
+
+## Authentication Method 1: OAuth Flow
+
+The OAuth flow opens a browser and handles authentication through a local callback server.
+
+<Steps>
+  <Step title="Start OAuth login">
+    Run the following command:
+
+    ```bash
+    ./CLIProxyAPI -codex-login
+    ```
+
+    This will:
+    - Start a local OAuth callback server
+    - Generate PKCE challenge and verifier
+    - Open your default web browser
+    - Navigate to OpenAI's OAuth authorization page
+  </Step>
+
+  <Step title="Complete authorization">
+    In the browser:
+    1. Sign in to your OpenAI account
+    2. Review the requested permissions
+    3. Click "Authorize" to grant access
+    4. Wait for automatic redirect to callback
+  </Step>
+
+  <Step title="Confirmation">
+    After successful authorization:
+
+    ```
+    Authentication saved to /path/to/auth/codex-<identifier>.json
+    Codex authentication successful!
+    ```
+
+    The tokens are automatically saved to your auth directory.
+  </Step>
+</Steps>
+
+### OAuth Flow Options
+
+#### Manual Browser
+
+For headless servers or when the browser doesn't open:
+
+```bash
+./CLIProxyAPI -codex-login -no-browser
+```
+
+Open the displayed URL manually in any browser.
+
+#### Custom Callback Port
+
+```bash
+./CLIProxyAPI -codex-login -oauth-callback-port 9000
+```
+
+## Authentication Method 2: Device Code Flow
+
+The device code flow doesn't require a browser on the same machine. Perfect for:
+- Headless servers
+- SSH sessions
+- Environments without graphical browsers
+- Restricted network environments
+
+<Steps>
+  <Step title="Start device code flow">
+    Run the following command:
+
+    ```bash
+    ./CLIProxyAPI -codex-device-login
+    ```
+
+    The CLI will display:
+    ```
+    Please visit: https://openai.com/activate
+    Enter this code: ABCD-EFGH
+    Waiting for authorization...
+    ```
+  </Step>
+
+  <Step title="Enter device code">
+    On any device with a browser:
+    1. Navigate to the displayed URL (usually https://openai.com/activate)
+    2. Sign in to your OpenAI account if prompted
+    3. Enter the device code exactly as shown
+    4. Confirm authorization
+  </Step>
+
+  <Step title="Wait for completion">
+    Back in the CLI:
+    - The command polls OpenAI's servers for authorization
+    - Once you approve on the other device, authentication completes automatically
+    - Tokens are saved to the auth directory
+
+    ```
+    Authentication saved to /path/to/auth/codex-<identifier>.json
+    Codex device authentication successful!
+    ```
+  </Step>
+</Steps>
+
+<Note>
+The device code typically expires after 15 minutes. Complete the authorization before it expires.
+</Note>
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Set via `-auth-dir` or in config file
+- Filename format: `codex-<identifier>-<timestamp>.json`
+- Example: `codex-user-1234567890.json`
+
+### Token Contents
+
+The stored token file contains:
+- OAuth 2.0 access token
+- Refresh token (when available)
+- Token type and expiration
+- Authentication method metadata
+- PKCE parameters (securely stored)
+
+### Multiple Accounts
+
+Authenticate with multiple OpenAI accounts for increased capacity:
+
+```bash
+# Account 1
+./CLIProxyAPI -codex-login
+
+# Account 2 (different terminal or after first completes)
+./CLIProxyAPI -codex-login
+
+# Or using device flow
+./CLIProxyAPI -codex-device-login
+```
+
+Each account creates a separate token file. The server automatically:
+- Discovers all token files
+- Manages credential rotation
+- Balances load across accounts
+- Handles rate limits per account
+
+## Comparison: OAuth vs Device Flow
+
+| Feature | OAuth Flow | Device Code Flow |
+|---------|------------|------------------|
+| Browser required | Yes (local) | No |
+| Headless server support | Limited | Excellent |
+| Speed | Faster | Slower (manual entry) |
+| User experience | Seamless redirect | Manual code entry |
+| Security | PKCE + callback | Device code + polling |
+| Use case | Local development | Remote/headless servers |
+
+<Tip>
+**Recommendation:**
+- Use **OAuth flow** (`-codex-login`) for local development and desktop environments
+- Use **device flow** (`-codex-device-login`) for servers, Docker containers, or SSH sessions
+</Tip>
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/codex-*.json
+    ```
+
+    You should see your Codex token file(s).
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    Watch for log messages indicating Codex credentials were loaded.
+  </Step>
+
+  <Step title="Make a test request">
+    Test Codex access with a code completion request:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "gpt-4-code",
+        "messages": [
+          {"role": "user", "content": "Write a function to reverse a string"}
+        ]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### OAuth Flow Issues
+
+#### Port already in use
+
+**Solution:** Use a custom port:
+```bash
+./CLIProxyAPI -codex-login -oauth-callback-port 9001
+```
+
+#### Browser doesn't open
+
+**Solution:** Use manual browser mode:
+```bash
+./CLIProxyAPI -codex-login -no-browser
+```
+
+#### Callback timeout
+
+**Cause:** Authorization not completed quickly enough.
+
+**Solution:**
+- Complete OAuth flow faster
+- Check firewall settings for callback port
+- Verify localhost is accessible
+
+### Device Flow Issues
+
+#### Device code expired
+
+**Cause:** The 15-minute device code timeout expired.
+
+**Solution:** Run `-codex-device-login` again to generate a new code.
+
+#### "Invalid device code" error
+
+**Cause:** Code was entered incorrectly.
+
+**Solution:**
+- Double-check the code (case-sensitive)
+- Ensure no extra spaces
+- Generate a new code if needed
+
+#### Polling timeout
+
+**Cause:** Authorization wasn't completed within the polling period.
+
+**Solution:**
+- Complete the authorization on the other device
+- Check network connectivity
+- Run the command again
+
+### Common Issues (Both Methods)
+
+#### Authentication failed
+
+**Possible causes:**
+- Invalid credentials
+- Network connectivity issues
+- OpenAI service outage
+- Insufficient account permissions
+
+**Solution:**
+1. Verify your OpenAI account has Codex access
+2. Check network connection
+3. Review error logs for details
+4. Try again after a few minutes
+
+#### Token not saving
+
+**Cause:** Permission issues with auth directory.
+
+**Solution:**
+```bash
+# Create directory if missing
+mkdir -p /path/to/auth-dir
+
+# Fix permissions
+chmod 755 /path/to/auth-dir
+```
+
+#### PKCE verification failed
+
+**Cause:** Security parameter mismatch.
+
+**Solution:**
+- Don't modify OAuth URLs manually
+- Ensure no proxies are interfering
+- Clear any cached authentication state
+- Try authentication again
+
+## Security Features
+
+### PKCE (Proof Key for Code Exchange)
+
+Both authentication methods use PKCE:
+- Prevents authorization code interception
+- Protects against CSRF attacks
+- Validates code exchange authenticity
+
+### Secure Token Storage
+
+- Token files use `0600` permissions (owner-only)
+- Tokens are never logged in plaintext
+- Refresh tokens enable automatic renewal
+- Files include checksums for integrity
+
+## Token Refresh
+
+Tokens are automatically refreshed by the server:
+- Monitors token expiration timestamps
+- Uses refresh tokens to obtain new access tokens
+- Saves refreshed tokens back to auth directory
+- Handles refresh failures gracefully
+
+## Re-authentication
+
+To re-authenticate a Codex account:
+
+1. Remove the existing token:
+   ```bash
+   rm /path/to/auth-dir/codex-*.json
+   ```
+
+2. Run authentication again:
+   ```bash
+   # OAuth flow
+   ./CLIProxyAPI -codex-login
+
+   # Or device flow
+   ./CLIProxyAPI -codex-device-login
+   ```
+
+<Warning>
+Never share your token files! They provide full access to your OpenAI Codex account and usage.
+</Warning>
+
+## Best Practices
+
+- **Choose the right method** - OAuth for local, device flow for remote
+- **Multiple accounts** - Use several accounts to increase rate limits
+- **Secure storage** - Protect your auth directory with appropriate permissions
+- **Monitor usage** - Track Codex usage in server logs
+- **Rotate regularly** - Re-authenticate periodically for security
+- **Backup tokens** - Keep secure backups of token files
+
+## Related Resources
+
+- [OpenAI API Documentation](https://platform.openai.com/docs)
+- [OAuth 2.0 Device Authorization Grant](https://oauth.net/2/device-flow/)
+- [Configuration Guide](/configuration/server)

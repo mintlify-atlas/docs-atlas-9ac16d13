@@ -1,0 +1,209 @@
+---
+title: Models List
+description: Retrieve available models from configured providers
+---
+
+# GET /v1/models
+
+Retrieve a list of all available models from your configured authentication providers. The response aggregates models from all active providers (Gemini, Claude, Codex, etc.) and formats them in OpenAI-compatible format.
+
+## Authentication
+
+This endpoint requires authentication via the `Authorization` header:
+
+```bash
+Authorization: Bearer YOUR_API_KEY
+```
+
+If no authentication providers are configured, all requests are allowed (development mode).
+
+## Response Format
+
+<ResponseField name="object" type="string">
+  Always `list`.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of model objects. Each model contains:
+  
+  <ResponseField name="id" type="string">
+    The model identifier (e.g., `gemini-2.5-pro`, `claude-sonnet-4`).
+  </ResponseField>
+  
+  <ResponseField name="object" type="string">
+    Always `model`.
+  </ResponseField>
+  
+  <ResponseField name="created" type="integer">
+    Unix timestamp of when the model was created/registered.
+  </ResponseField>
+  
+  <ResponseField name="owned_by" type="string">
+    The organization that owns the model (e.g., `google`, `anthropic`, `openai`).
+  </ResponseField>
+</ResponseField>
+
+## Model Aggregation
+
+The models list is dynamically generated based on:
+
+1. **Active Authentication Providers**: Only models from authenticated providers are included
+2. **Model Registry**: The global model registry (`internal/registry`) tracks available models per provider
+3. **Filtered Response**: The API returns only the essential fields (`id`, `object`, `created`, `owned_by`) to match OpenAI's format
+
+### Provider-Specific Models
+
+Models are sourced from multiple providers:
+
+- **Gemini**: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-exp-1206`, etc.
+- **Claude**: `claude-sonnet-4`, `claude-opus-4`, `claude-haiku-4`, etc.
+- **Codex**: OpenAI Codex models via OAuth
+- **Vertex AI**: Gemini models via service accounts or API keys
+- **OpenAI-Compatible**: Custom endpoints configured in `openai_compatibility`
+- **Other Providers**: Qwen, Antigravity, iFlow, Kimi
+
+## Examples
+
+### List All Models
+
+```bash
+curl http://localhost:8317/v1/models \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemini-2.5-pro",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "google"
+    },
+    {
+      "id": "claude-sonnet-4",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "anthropic"
+    },
+    {
+      "id": "gpt-4o",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "openai"
+    }
+  ]
+}
+```
+
+### With Python OpenAI SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8317/v1",
+    api_key="your-api-key"
+)
+
+models = client.models.list()
+for model in models.data:
+    print(f"{model.id} (owned by {model.owned_by})")
+```
+
+### With JavaScript/TypeScript
+
+```typescript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:8317/v1',
+  apiKey: 'your-api-key',
+});
+
+const models = await client.models.list();
+models.data.forEach((model) => {
+  console.log(`${model.id} (${model.owned_by})`);
+});
+```
+
+## Implementation Details
+
+The `/v1/models` endpoint is implemented in `sdk/api/handlers/openai/openai_handlers.go`:
+
+- **Dynamic Registry**: Models are fetched from the global model registry which tracks available models per authenticated provider
+- **Filtered Fields**: Only returns the 4 required OpenAI fields to maintain API compatibility
+- **User-Agent Routing**: If the User-Agent starts with `claude-cli`, the request is routed to the Claude-specific models handler instead
+
+### Source Code Reference
+
+From `openai_handlers.go:58-90`:
+
+```go
+func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
+    // Get all available models
+    allModels := h.Models()
+
+    // Filter to only include the 4 required fields
+    filteredModels := make([]map[string]any, len(allModels))
+    for i, model := range allModels {
+        filteredModel := map[string]any{
+            "id":     model["id"],
+            "object": model["object"],
+        }
+
+        if created, exists := model["created"]; exists {
+            filteredModel["created"] = created
+        }
+        if ownedBy, exists := model["owned_by"]; exists {
+            filteredModel["owned_by"] = ownedBy
+        }
+
+        filteredModels[i] = filteredModel
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "object": "list",
+        "data":   filteredModels,
+    })
+}
+```
+
+## Model Aliasing
+
+You can create custom model aliases using the `ampcode.model-mappings` configuration:
+
+```yaml
+ampcode:
+  model-mappings:
+    - from: "my-custom-model"
+      to: "gemini-2.5-pro"
+    - from: "fast-model"
+      to: "gemini-2.5-flash"
+```
+
+Aliased models will appear in the `/v1/models` list and can be used in requests.
+
+<Note>
+  The model list updates dynamically as authentication providers are added or removed. Changes to authentication files in the auth directory are detected automatically.
+</Note>
+
+## Error Responses
+
+Errors follow the OpenAI error format:
+
+```json
+{
+  "error": {
+    "message": "Authentication required",
+    "type": "authentication_error"
+  }
+}
+```
+
+Common status codes:
+- `401 Unauthorized`: Missing or invalid API key
+- `500 Internal Server Error`: Server-side error retrieving models

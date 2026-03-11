@@ -1,0 +1,507 @@
+---
+title: 'Embedding the Proxy'
+description: 'Complete guide to embedding the proxy with the builder pattern, options, and hooks'
+---
+
+## Builder Pattern
+
+The SDK uses a fluent builder pattern for constructing service instances. This provides type-safe configuration with clear validation.
+
+### Basic Builder
+
+```go
+svc, err := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    WithConfigPath("config.yaml").
+    Build()
+```
+
+### Required Configuration
+
+Two fields are **required**:
+
+```go
+.WithConfig(cfg)          // Configuration object
+.WithConfigPath(path)     // Config file path for watching
+```
+
+If either is missing, `Build()` returns an error:
+
+```go
+svc, err := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    Build()
+// Error: "cliproxy: configuration path is required"
+```
+
+## Builder Options
+
+### Configuration Methods
+
+#### WithConfig
+
+Sets the configuration instance:
+
+```go
+cfg, err := config.LoadConfig("config.yaml")
+if err != nil {
+    return err
+}
+
+builder.WithConfig(cfg)
+```
+
+#### WithConfigPath
+
+Sets the file path for configuration watching:
+
+```go
+builder.WithConfigPath("/etc/myapp/config.yaml")
+```
+
+When the file changes, the configuration is automatically reloaded.
+
+### Authentication Providers
+
+#### WithTokenClientProvider
+
+Customize how token-backed clients are loaded:
+
+```go
+type CustomTokenProvider struct{}
+
+func (p *CustomTokenProvider) Load(ctx context.Context, cfg *config.Config) (*cliproxy.TokenClientResult, error) {
+    // Custom token loading logic
+    return &cliproxy.TokenClientResult{
+        SuccessfulAuthed: 5,
+    }, nil
+}
+
+builder.WithTokenClientProvider(&CustomTokenProvider{})
+```
+
+#### WithAPIKeyClientProvider
+
+Customize API key client loading:
+
+```go
+type CustomAPIKeyProvider struct{}
+
+func (p *CustomAPIKeyProvider) Load(ctx context.Context, cfg *config.Config) (*cliproxy.APIKeyClientResult, error) {
+    // Load API keys from custom source
+    return &cliproxy.APIKeyClientResult{
+        GeminiKeyCount: 3,
+        ClaudeKeyCount: 2,
+    }, nil
+}
+
+builder.WithAPIKeyClientProvider(&CustomAPIKeyProvider{})
+```
+
+### Authentication Managers
+
+#### WithAuthManager
+
+Override the legacy authentication manager:
+
+```go
+import sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
+
+authManager := sdkAuth.NewManager(
+    sdkAuth.GetTokenStore(),
+    sdkAuth.NewGeminiAuthenticator(),
+    sdkAuth.NewClaudeAuthenticator(),
+)
+
+builder.WithAuthManager(authManager)
+```
+
+#### WithCoreAuthManager
+
+Customize the core authentication manager:
+
+```go
+import coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+
+tokenStore := sdkAuth.GetTokenStore()
+selector := &coreauth.RoundRobinSelector{}
+
+coreManager := coreauth.NewManager(tokenStore, selector, nil)
+builder.WithCoreAuthManager(coreManager)
+```
+
+#### WithRequestAccessManager
+
+Set the request access manager for authentication:
+
+```go
+import sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+
+accessManager := sdkaccess.NewManager()
+// Register custom providers
+sdkaccess.RegisterProvider("custom", myProvider)
+accessManager.SetProviders(sdkaccess.RegisteredProviders())
+
+builder.WithRequestAccessManager(accessManager)
+```
+
+### File Watching
+
+#### WithWatcherFactory
+
+Customize configuration and auth file watching:
+
+```go
+import "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+
+factory := func(configPath, authDir string, reload func(*config.Config)) (*cliproxy.WatcherWrapper, error) {
+    // Create custom watcher
+    return &cliproxy.WatcherWrapper{
+        // ... implementation
+    }, nil
+}
+
+builder.WithWatcherFactory(factory)
+```
+
+### Server Options
+
+#### WithServerOptions
+
+Add HTTP server configuration options:
+
+```go
+import (
+    "github.com/gin-gonic/gin"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/api"
+)
+
+builder.WithServerOptions(
+    // Add custom middleware
+    api.WithMiddleware(func(c *gin.Context) {
+        c.Header("X-Custom-Header", "value")
+        c.Next()
+    }),
+    
+    // Add custom request logger
+    api.WithRequestLoggerFactory(func(cfg *config.Config, cfgPath string) logging.RequestLogger {
+        return myCustomLogger
+    }),
+)
+```
+
+#### WithLocalManagementPassword
+
+Set a password for localhost management endpoints:
+
+```go
+builder.WithLocalManagementPassword("secure-password-123")
+```
+
+This restricts management API access:
+
+```bash
+# Without password - 401 Unauthorized
+curl http://localhost:8080/v1/management/models
+
+# With password - Success
+curl -H "Authorization: Bearer secure-password-123" \
+  http://localhost:8080/v1/management/models
+```
+
+<Warning>
+  Management endpoints are only accessible from localhost (127.0.0.1) for security.
+</Warning>
+
+#### WithPostAuthHook
+
+Register a hook called after auth creation but before persistence:
+
+```go
+import coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+
+hook := func(ctx context.Context, auth *coreauth.Auth) error {
+    // Inject custom metadata
+    if auth.Metadata == nil {
+        auth.Metadata = make(map[string]any)
+    }
+    auth.Metadata["custom_field"] = "value"
+    
+    // Access request info if available
+    if reqInfo := coreauth.GetRequestInfo(ctx); reqInfo != nil {
+        auth.Metadata["request_ip"] = reqInfo.Headers.Get("X-Forwarded-For")
+    }
+    
+    return nil
+}
+
+builder.WithPostAuthHook(hook)
+```
+
+## Lifecycle Hooks
+
+Hooks allow you to execute custom code during service lifecycle events.
+
+### OnBeforeStart
+
+Called before the service starts, allowing configuration modifications:
+
+```go
+hooks := cliproxy.Hooks{
+    OnBeforeStart: func(cfg *config.Config) {
+        // Modify configuration
+        cfg.LogLevel = "debug"
+        
+        // Add runtime values
+        if os.Getenv("PROXY_URL") != "" {
+            cfg.ProxyURL = os.Getenv("PROXY_URL")
+        }
+        
+        // Validate custom requirements
+        if cfg.Port < 1024 {
+            log.Warn("Using privileged port, ensure proper permissions")
+        }
+    },
+}
+
+builder.WithHooks(hooks)
+```
+
+### OnAfterStart
+
+Called after successful startup, providing access to the running service:
+
+```go
+hooks := cliproxy.Hooks{
+    OnAfterStart: func(svc *cliproxy.Service) {
+        // Register usage tracking
+        svc.RegisterUsagePlugin(myUsagePlugin)
+        
+        // Register custom models
+        models := []*cliproxy.ModelInfo{
+            {
+                ID:          "custom-model-1",
+                Object:      "model",
+                Type:        "custom",
+                DisplayName: "Custom Model 1",
+            },
+        }
+        cliproxy.GlobalModelRegistry().RegisterClient(
+            "custom-provider",
+            "custom",
+            models,
+        )
+        
+        // Start background tasks
+        go monitorServiceHealth(svc)
+    },
+}
+
+builder.WithHooks(hooks)
+```
+
+### Complete Hooks Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+    
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+func main() {
+    cfg, _ := config.LoadConfig("config.yaml")
+    
+    hooks := cliproxy.Hooks{
+        OnBeforeStart: func(cfg *config.Config) {
+            fmt.Println("==> Preparing service...")
+            
+            // Apply environment overrides
+            cfg.LogLevel = "info"
+            
+            // Log configuration
+            fmt.Printf("Host: %s:%d\n", cfg.Host, cfg.Port)
+            fmt.Printf("Auth Dir: %s\n", cfg.AuthDir)
+        },
+        
+        OnAfterStart: func(svc *cliproxy.Service) {
+            fmt.Println("==> Service started successfully")
+            fmt.Printf("API endpoint: http://%s:%d\n", cfg.Host, cfg.Port)
+            
+            // Start health check
+            go func() {
+                ticker := time.NewTicker(30 * time.Second)
+                defer ticker.Stop()
+                
+                for range ticker.C {
+                    // Check service health
+                    fmt.Println("Health check: OK")
+                }
+            }()
+        },
+    }
+    
+    svc, err := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        WithHooks(hooks).
+        Build()
+    if err != nil {
+        panic(err)
+    }
+    
+    svc.Run(context.Background())
+}
+```
+
+## Complete Builder Example
+
+Here's a comprehensive example using multiple builder options:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    
+    "github.com/gin-gonic/gin"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/api"
+    sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+    sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/logging"
+)
+
+func main() {
+    // Load configuration
+    cfg, err := config.LoadConfig("config.yaml")
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+        os.Exit(1)
+    }
+    
+    // Set up auth manager
+    tokenStore := sdkAuth.GetTokenStore()
+    if dirSetter, ok := tokenStore.(interface{ SetBaseDir(string) }); ok {
+        dirSetter.SetBaseDir(cfg.AuthDir)
+    }
+    
+    // Create core auth manager with custom selector
+    selector := &coreauth.RoundRobinSelector{}
+    coreManager := coreauth.NewManager(tokenStore, selector, nil)
+    
+    // Set up access manager
+    accessManager := sdkaccess.NewManager()
+    accessManager.SetProviders(sdkaccess.RegisteredProviders())
+    
+    // Define lifecycle hooks
+    hooks := cliproxy.Hooks{
+        OnBeforeStart: func(cfg *config.Config) {
+            fmt.Println("Initializing service...")
+        },
+        OnAfterStart: func(svc *cliproxy.Service) {
+            fmt.Printf("Service ready at http://%s:%d\n", cfg.Host, cfg.Port)
+        },
+    }
+    
+    // Post-auth hook to add metadata
+    postAuthHook := func(ctx context.Context, auth *coreauth.Auth) error {
+        if auth.Metadata == nil {
+            auth.Metadata = make(map[string]any)
+        }
+        auth.Metadata["app_version"] = "1.0.0"
+        return nil
+    }
+    
+    // Build the service
+    svc, err := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        WithCoreAuthManager(coreManager).
+        WithRequestAccessManager(accessManager).
+        WithHooks(hooks).
+        WithLocalManagementPassword("admin-password").
+        WithPostAuthHook(postAuthHook).
+        WithServerOptions(
+            api.WithMiddleware(func(c *gin.Context) {
+                c.Header("X-Powered-By", "MyApp")
+                c.Next()
+            }),
+            api.WithRequestLoggerFactory(func(cfg *config.Config, cfgPath string) logging.RequestLogger {
+                return logging.NewFileRequestLogger("logs", "./")
+            }),
+        ).
+        Build()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Build error: %v\n", err)
+        os.Exit(1)
+    }
+    
+    // Run the service
+    ctx := context.Background()
+    if err := svc.Run(ctx); err != nil {
+        fmt.Fprintf(os.Stderr, "Runtime error: %v\n", err)
+        os.Exit(1)
+    }
+}
+```
+
+## Service Management
+
+### Starting the Service
+
+```go
+ctx := context.Background()
+err := svc.Run(ctx)
+```
+
+The `Run` method:
+- Starts the HTTP server
+- Initializes authentication
+- Starts file watchers
+- Blocks until context is cancelled
+
+### Stopping the Service
+
+```go
+// Cancel the context to initiate shutdown
+cancel()
+
+// Or call Shutdown explicitly with timeout
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+err := svc.Shutdown(shutdownCtx)
+```
+
+The `Shutdown` method:
+- Stops accepting new requests
+- Completes in-flight requests
+- Stops file watchers
+- Cleans up resources
+- Is idempotent (safe to call multiple times)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Features" icon="gears" href="/sdk/advanced">
+    Learn about custom executors and translators
+  </Card>
+  <Card title="Access Providers" icon="shield" href="/sdk/access">
+    Implement custom authentication
+  </Card>
+  <Card title="File Watching" icon="eye" href="/sdk/watcher">
+    Understand config and auth file watching
+  </Card>
+  <Card title="Usage Tracking" icon="chart-line" href="/sdk/overview">
+    Monitor API usage and consumption
+  </Card>
+</CardGroup>

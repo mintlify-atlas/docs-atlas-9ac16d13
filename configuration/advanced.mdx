@@ -1,0 +1,524 @@
+---
+title: Advanced Configuration
+description: Configure advanced features including proxies, payload rules, headers, retry logic, and streaming behavior
+---
+
+## Overview
+
+Advanced configuration options allow fine-tuning of the CLI Proxy API behavior including network proxies, request payload manipulation, custom headers, retry strategies, and streaming optimizations.
+
+## Proxy Configuration
+
+<ParamField path="proxy-url" type="string" default="(empty)">
+  Global proxy URL for outbound requests. Supports `socks5`, `http`, and `https` protocols.
+  
+  **Format:**
+  ```
+  protocol://[user:pass@]host:port[/]
+  ```
+  
+  **Examples:**
+  ```yaml
+  proxy-url: "socks5://192.168.1.1:1080"
+  proxy-url: "http://proxy.company.com:8080"
+  proxy-url: "socks5://user:pass@192.168.1.1:1080/"
+  ```
+</ParamField>
+
+### Per-Provider Proxy Override
+
+Each provider supports per-credential proxy configuration:
+
+```yaml
+# Global default
+proxy-url: "socks5://global-proxy:1080"
+
+# Per-provider override
+gemini-api-key:
+  - api-key: "key1"
+    proxy-url: "socks5://gemini-proxy:1080"  # Override for this key
+
+claude-api-key:
+  - api-key: "key2"
+    proxy-url: ""  # Disable proxy for this key
+
+codex-api-key:
+  - api-key: "key3"
+    # Uses global proxy-url
+```
+
+## Custom Headers
+
+Add custom HTTP headers to upstream provider requests.
+
+<ParamField path="<provider>[].headers" type="object">
+  Custom headers for provider requests. Applied to all requests made with this credential.
+  
+  **Example:**
+  ```yaml
+  gemini-api-key:
+    - api-key: "AIzaSy..."
+      headers:
+        X-Custom-Header: "custom-value"
+        X-Team-ID: "team-alpha"
+  ```
+</ParamField>
+
+### Supported Providers
+
+All API key providers support custom headers:
+- `gemini-api-key`
+- `claude-api-key`
+- `codex-api-key`
+- `openai-compatibility`
+- `vertex-api-key`
+
+### Headers Example
+
+```yaml
+claude-api-key:
+  - api-key: "sk-atSM..."
+    base-url: "https://api.anthropic.com"
+    headers:
+      X-Custom-Header: "custom-value"
+      X-Request-Source: "internal-proxy"
+      Cookie: "session=abc123"
+
+openai-compatibility:
+  - name: "custom-provider"
+    base-url: "https://api.provider.com/v1"
+    api-key-entries:
+      - api-key: "provider-key"
+    headers:
+      X-Provider-ID: "prod-001"
+      User-Agent: "CustomClient/1.0"
+    models:
+      - name: "model-1"
+        alias: "m1"
+```
+
+## Passthrough Headers
+
+<ParamField path="passthrough-headers" type="boolean" default="false">
+  When true, forward filtered upstream response headers to downstream clients.
+  
+  **Forwarded headers include:**
+  - `Content-Type`
+  - `X-Request-ID`
+  - Custom provider headers
+  
+  **Example:**
+  ```yaml
+  passthrough-headers: true
+  ```
+  
+  <Note>
+    Security-sensitive headers (Authorization, Set-Cookie) are always filtered and never forwarded.
+  </Note>
+</ParamField>
+
+## Retry Configuration
+
+<ParamField path="request-retry" type="integer" default="3">
+  Number of times to retry a request. Retries occur if HTTP response code is 403, 408, 500, 502, 503, or 504.
+  
+  **Example:**
+  ```yaml
+  request-retry: 5
+  ```
+</ParamField>
+
+<ParamField path="max-retry-credentials" type="integer" default="0">
+  Maximum number of different credentials to try for one failed request.
+  
+  **Values:**
+  - `0` - Try all available credentials (legacy behavior)
+  - Positive integer - Limit credential rotation
+  
+  **Example:**
+  ```yaml
+  max-retry-credentials: 3  # Try up to 3 different credentials
+  ```
+</ParamField>
+
+<ParamField path="max-retry-interval" type="integer" default="30">
+  Maximum wait time in seconds for a cooled-down credential before triggering a retry.
+  
+  **Example:**
+  ```yaml
+  max-retry-interval: 60  # Wait up to 60 seconds
+  ```
+</ParamField>
+
+### Quota Exceeded Behavior
+
+<ParamField path="quota-exceeded" type="object">
+  Behavior when API quota limits are exceeded.
+  
+  <Expandable title="Quota Properties">
+    <ParamField path="quota-exceeded.switch-project" type="boolean" default="true">
+      Whether to automatically switch to another project when quota is exceeded.
+    </ParamField>
+    
+    <ParamField path="quota-exceeded.switch-preview-model" type="boolean" default="true">
+      Whether to automatically switch to a preview model when quota is exceeded.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Retry Example
+
+```yaml
+# Retry up to 5 times
+request-retry: 5
+
+# Try up to 3 different credentials
+max-retry-credentials: 3
+
+# Wait up to 60 seconds for cooldown
+max-retry-interval: 60
+
+# Quota exceeded behavior
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+```
+
+## Routing Strategy
+
+<ParamField path="routing.strategy" type="string" default="round-robin">
+  Credential selection strategy when multiple credentials match.
+  
+  **Supported values:**
+  - `"round-robin"` - Distribute requests evenly across all credentials
+  - `"fill-first"` - Use first credential until quota exhausted, then next
+  
+  **Example:**
+  ```yaml
+  routing:
+    strategy: "round-robin"
+  ```
+</ParamField>
+
+## Streaming Configuration
+
+<ParamField path="streaming" type="object">
+  Server-side streaming behavior (SSE keep-alives and safe bootstrap retries).
+  
+  <Expandable title="Streaming Properties">
+    <ParamField path="streaming.keepalive-seconds" type="integer" default="0">
+      How often the server emits SSE heartbeats (`: keep-alive\n\n`).
+      
+      **Values:**
+      - `0` - Disabled (default)
+      - Positive integer - Keep-alive interval in seconds
+      
+      <Tip>
+        Set to 15-30 seconds to prevent idle connection timeouts from proxies and load balancers.
+      </Tip>
+    </ParamField>
+    
+    <ParamField path="streaming.bootstrap-retries" type="integer" default="0">
+      How many times the server may retry a streaming request before any bytes are sent.
+      
+      **Values:**
+      - `0` - Disabled (default)
+      - Positive integer - Number of retries
+      
+      <Note>
+        Bootstrap retries allow auth rotation and transient recovery before the client sees any response.
+      </Note>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="nonstream-keepalive-interval" type="integer" default="0">
+  Emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
+  
+  **Values:**
+  - `0` - Disabled (default)
+  - Positive integer - Interval in seconds
+  
+  **Example:**
+  ```yaml
+  nonstream-keepalive-interval: 30
+  ```
+</ParamField>
+
+### Streaming Example
+
+```yaml
+streaming:
+  keepalive-seconds: 15    # SSE heartbeat every 15 seconds
+  bootstrap-retries: 1     # Retry once before sending response
+
+nonstream-keepalive-interval: 30  # Keep-alive for non-streaming
+```
+
+## Payload Rules
+
+Payload rules allow modification of request payloads before forwarding to upstream providers.
+
+<ParamField path="payload" type="object">
+  Default and override parameter rules applied to provider payloads.
+  
+  <Expandable title="Rule Types">
+    <ParamField path="payload.default" type="array">
+      Rules that only set parameters when they are missing in the payload.
+    </ParamField>
+    
+    <ParamField path="payload.default-raw" type="array">
+      Rules that set raw JSON values only when missing (must be valid JSON).
+    </ParamField>
+    
+    <ParamField path="payload.override" type="array">
+      Rules that always set parameters, overwriting any existing values.
+    </ParamField>
+    
+    <ParamField path="payload.override-raw" type="array">
+      Rules that always set raw JSON values, overwriting existing values (must be valid JSON).
+    </ParamField>
+    
+    <ParamField path="payload.filter" type="array">
+      Rules that remove parameters from the payload by JSON path.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Payload Rule Structure
+
+Each rule contains:
+- `models` - List of model patterns and protocol constraints
+- `params` - JSON path → value mappings (or array of paths for filter rules)
+
+### Payload Examples
+
+#### Default Rules (Set if Missing)
+
+```yaml
+payload:
+  default:
+    - models:
+        - name: "gemini-2.5-pro"  # Exact match
+          protocol: "gemini"       # Restrict to Gemini protocol
+      params:
+        "generationConfig.thinkingConfig.thinkingBudget": 32768
+    
+    - models:
+        - name: "gemini-*"         # Wildcard match
+          protocol: "gemini"
+      params:
+        "generationConfig.temperature": 0.7
+```
+
+#### Default Raw Rules (Raw JSON)
+
+```yaml
+payload:
+  default-raw:
+    - models:
+        - name: "gemini-2.5-pro"
+          protocol: "gemini"
+      params:
+        "generationConfig.responseJsonSchema": '{"type":"object","properties":{"answer":{"type":"string"}}}'
+```
+
+<Warning>
+  Raw JSON values must be valid JSON strings. Invalid JSON will cause the rule to be dropped on startup.
+</Warning>
+
+#### Override Rules (Always Set)
+
+```yaml
+payload:
+  override:
+    - models:
+        - name: "gpt-*"            # Wildcard for all GPT models
+          protocol: "codex"        # OpenAI/Codex protocol
+      params:
+        "reasoning.effort": "high"
+        "temperature": 0.5
+```
+
+#### Override Raw Rules
+
+```yaml
+payload:
+  override-raw:
+    - models:
+        - name: "gpt-*"
+          protocol: "codex"
+      params:
+        "response_format": '{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object"}}}'
+```
+
+#### Filter Rules (Remove Parameters)
+
+```yaml
+payload:
+  filter:
+    - models:
+        - name: "gemini-2.5-pro"
+          protocol: "gemini"
+      params:  # List of JSON paths to remove
+        - "generationConfig.thinkingConfig.thinkingBudget"
+        - "generationConfig.responseJsonSchema"
+```
+
+### Model Patterns
+
+Supports wildcard matching:
+- `"gpt-*"` - Prefix match (gpt-4, gpt-5, etc.)
+- `"*-mini"` - Suffix match (gpt-4-mini, claude-3-haiku-mini, etc.)
+- `"*codex*"` - Substring match (gpt-5-codex, codex-turbo, etc.)
+- `"gemini-2.5-pro"` - Exact match
+
+### Protocol Constraints
+
+Supported protocols:
+- `"openai"` - OpenAI Chat Completions format
+- `"gemini"` - Google Gemini format
+- `"claude"` - Anthropic Claude format
+- `"codex"` - OpenAI Codex format
+- `"antigravity"` - Gemini 3.0 experimental
+
+## WebSocket Authentication
+
+<ParamField path="ws-auth" type="boolean" default="false">
+  When true, enable authentication for the WebSocket API (`/v1/ws`).
+  
+  **Example:**
+  ```yaml
+  ws-auth: true
+  ```
+  
+  <Note>
+    WebSocket authentication uses the same API keys as HTTP requests.
+  </Note>
+</ParamField>
+
+## Complete Advanced Configuration Example
+
+```yaml
+# Global Proxy
+proxy-url: "socks5://192.168.1.1:1080"
+
+# Headers Passthrough
+passthrough-headers: true
+
+# Retry Configuration
+request-retry: 5
+max-retry-credentials: 3
+max-retry-interval: 60
+
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+
+# Routing Strategy
+routing:
+  strategy: "round-robin"
+
+# Streaming
+streaming:
+  keepalive-seconds: 15
+  bootstrap-retries: 1
+
+nonstream-keepalive-interval: 30
+
+# WebSocket Auth
+ws-auth: true
+
+# Payload Rules
+payload:
+  # Set defaults if missing
+  default:
+    - models:
+        - name: "gemini-*"
+          protocol: "gemini"
+      params:
+        "generationConfig.temperature": 0.7
+  
+  # Override always
+  override:
+    - models:
+        - name: "gpt-*"
+          protocol: "codex"
+      params:
+        "reasoning.effort": "high"
+  
+  # Remove parameters
+  filter:
+    - models:
+        - name: "claude-*"
+          protocol: "claude"
+      params:
+        - "metadata.user_id"
+
+# Provider-Specific Settings
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    proxy-url: "socks5://gemini-proxy:1080"  # Override global
+    headers:
+      X-Custom-Header: "custom-value"
+
+claude-api-key:
+  - api-key: "sk-atSM..."
+    headers:
+      X-Team-ID: "team-alpha"
+```
+
+## Best Practices
+
+<Tip>
+  **Proxy Configuration:**
+  - Use global `proxy-url` for most cases
+  - Override per-provider only when necessary
+  - Test proxy connectivity before deployment
+  - Use authentication for proxy servers in production
+</Tip>
+
+<Warning>
+  **Payload Rules:**
+  - Test payload rules with actual requests
+  - Use `default` rules for optional parameters
+  - Use `override` rules sparingly (may break client expectations)
+  - Validate raw JSON strings before deployment
+  - Order matters: filter rules run before defaults and overrides
+</Warning>
+
+<Note>
+  **Retry Strategy:**
+  - Higher `request-retry` increases reliability but adds latency
+  - Set `max-retry-credentials` to prevent exhausting all keys on persistent failures
+  - Adjust `max-retry-interval` based on your quota reset periods
+</Note>
+
+## Troubleshooting
+
+### Proxy Not Working
+
+1. Verify proxy URL format (protocol://host:port)
+2. Test proxy connectivity outside the application
+3. Check firewall rules allow proxy connections
+4. Verify authentication credentials if required
+
+### Payload Rules Not Applied
+
+1. Check model name pattern matches exactly (case-sensitive)
+2. Verify protocol constraint matches provider
+3. Validate raw JSON strings are well-formed
+4. Check server logs for rule validation errors
+
+### Headers Not Forwarded
+
+1. Ensure `passthrough-headers: true`
+2. Check upstream provider actually sends the headers
+3. Verify headers are not security-sensitive (filtered automatically)
+
+### Excessive Retries
+
+1. Lower `request-retry` value
+2. Set `max-retry-credentials` to limit credential rotation
+3. Check upstream provider status (may be down)
+4. Review quota limits and cooldown periods

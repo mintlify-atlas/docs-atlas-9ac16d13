@@ -1,0 +1,319 @@
+---
+title: HTTP Request Example
+description: Learn how to execute arbitrary HTTP requests with provider credentials using the CLI Proxy API SDK
+---
+
+## Overview
+
+This example demonstrates how to use `coreauth.Manager.HttpRequest` and `coreauth.Manager.NewHttpRequest` to execute arbitrary HTTP requests with provider credentials automatically injected. This is useful when you need to make custom API calls to a provider while leveraging the authentication system.
+
+## Use Case
+
+Use this pattern when you need to:
+
+- Make custom API calls to a provider beyond standard completion requests
+- Execute HTTP requests with automatic credential injection
+- Test authentication and header injection logic
+- Build custom integrations that need provider credentials
+
+## Complete Source Code
+
+```go
+// Package main demonstrates how to use coreauth.Manager.HttpRequest/NewHttpRequest
+// to execute arbitrary HTTP requests with provider credentials injected.
+//
+// This example registers a minimal custom executor that injects an Authorization
+// header from auth.Attributes["api_key"], then performs two requests against
+// httpbin.org to show the injected headers.
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	clipexec "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	log "github.com/sirupsen/logrus"
+)
+
+const providerKey = "echo"
+
+// EchoExecutor is a minimal provider implementation for demonstration purposes.
+type EchoExecutor struct{}
+
+func (EchoExecutor) Identifier() string { return providerKey }
+
+func (EchoExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth) error {
+	if req == nil || auth == nil {
+		return nil
+	}
+	if auth.Attributes != nil {
+		if apiKey := strings.TrimSpace(auth.Attributes["api_key"]); apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+	return nil
+}
+
+func (EchoExecutor) HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, fmt.Errorf("echo executor: request is nil")
+	}
+	if ctx == nil {
+		ctx = req.Context()
+	}
+	httpReq := req.WithContext(ctx)
+	if errPrep := (EchoExecutor{}).PrepareRequest(httpReq, auth); errPrep != nil {
+		return nil, errPrep
+	}
+	return http.DefaultClient.Do(httpReq)
+}
+
+func (EchoExecutor) Execute(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
+	return clipexec.Response{}, errors.New("echo executor: Execute not implemented")
+}
+
+func (EchoExecutor) ExecuteStream(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (*clipexec.StreamResult, error) {
+	return nil, errors.New("echo executor: ExecuteStream not implemented")
+}
+
+func (EchoExecutor) Refresh(context.Context, *coreauth.Auth) (*coreauth.Auth, error) {
+	return nil, errors.New("echo executor: Refresh not implemented")
+}
+
+func (EchoExecutor) CountTokens(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
+	return clipexec.Response{}, errors.New("echo executor: CountTokens not implemented")
+}
+
+func main() {
+	log.SetLevel(log.InfoLevel)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	core := coreauth.NewManager(nil, nil, nil)
+	core.RegisterExecutor(EchoExecutor{})
+
+	auth := &coreauth.Auth{
+		ID:       "demo-echo",
+		Provider: providerKey,
+		Attributes: map[string]string{
+			"api_key": "demo-api-key",
+		},
+	}
+
+	// Example 1: Build a prepared request and execute it using your own http.Client.
+	reqPrepared, errReqPrepared := core.NewHttpRequest(
+		ctx,
+		auth,
+		http.MethodGet,
+		"https://httpbin.org/anything",
+		nil,
+		http.Header{"X-Example": []string{"prepared"}},
+	)
+	if errReqPrepared != nil {
+		panic(errReqPrepared)
+	}
+	respPrepared, errDoPrepared := http.DefaultClient.Do(reqPrepared)
+	if errDoPrepared != nil {
+		panic(errDoPrepared)
+	}
+	defer func() {
+		if errClose := respPrepared.Body.Close(); errClose != nil {
+			log.Errorf("close response body error: %v", errClose)
+		}
+	}()
+	bodyPrepared, errReadPrepared := io.ReadAll(respPrepared.Body)
+	if errReadPrepared != nil {
+		panic(errReadPrepared)
+	}
+	fmt.Printf("Prepared request status: %d\n%s\n\n", respPrepared.StatusCode, bodyPrepared)
+
+	// Example 2: Execute a raw request via core.HttpRequest (auto inject + do).
+	rawBody := []byte(`{"hello":"world"}`)
+	rawReq, errRawReq := http.NewRequestWithContext(ctx, http.MethodPost, "https://httpbin.org/anything", bytes.NewReader(rawBody))
+	if errRawReq != nil {
+		panic(errRawReq)
+	}
+	rawReq.Header.Set("Content-Type", "application/json")
+	rawReq.Header.Set("X-Example", "executed")
+
+	respExec, errDoExec := core.HttpRequest(ctx, auth, rawReq)
+	if errDoExec != nil {
+		panic(errDoExec)
+	}
+	defer func() {
+		if errClose := respExec.Body.Close(); errClose != nil {
+			log.Errorf("close response body error: %v", errClose)
+		}
+	}()
+	bodyExec, errReadExec := io.ReadAll(respExec.Body)
+	if errReadExec != nil {
+		panic(errReadExec)
+	}
+	fmt.Printf("Manager HttpRequest status: %d\n%s\n", respExec.StatusCode, bodyExec)
+}
+```
+
+## Key Concepts
+
+### 1. Two Approaches for HTTP Requests
+
+The example demonstrates two different approaches:
+
+#### Approach 1: NewHttpRequest + Custom Client
+
+Use `core.NewHttpRequest()` to build a prepared request with credentials injected, then execute it with your own HTTP client:
+
+```go
+reqPrepared, err := core.NewHttpRequest(
+    ctx,
+    auth,
+    http.MethodGet,
+    "https://api.provider.com/endpoint",
+    nil,
+    http.Header{"X-Custom": []string{"header"}},
+)
+resp, err := http.DefaultClient.Do(reqPrepared)
+```
+
+This approach gives you full control over the HTTP client and transport.
+
+#### Approach 2: HttpRequest (All-in-One)
+
+Use `core.HttpRequest()` to both inject credentials and execute the request:
+
+```go
+rawReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+rawReq.Header.Set("Content-Type", "application/json")
+resp, err := core.HttpRequest(ctx, auth, rawReq)
+```
+
+This approach is simpler and handles everything in one call.
+
+### 2. Executor Integration
+
+The `EchoExecutor` implements the minimal executor interface with:
+
+- **`Identifier()`** - Returns the provider key "echo"
+- **`PrepareRequest()`** - Injects the Authorization header from `auth.Attributes["api_key"]`
+- **`HttpRequest()`** - Executes the HTTP request with credentials
+
+The other executor methods return errors since this example focuses only on HTTP request execution.
+
+### 3. Authentication
+
+Authentication is provided through the `Auth` struct:
+
+```go
+auth := &coreauth.Auth{
+    ID:       "demo-echo",
+    Provider: providerKey,
+    Attributes: map[string]string{
+        "api_key": "demo-api-key",
+    },
+}
+```
+
+The `api_key` attribute is extracted by `PrepareRequest()` and injected as a Bearer token.
+
+### 4. Request Lifecycle
+
+1. Create an `Auth` object with credentials
+2. Register an executor with the `Manager`
+3. Build or create an HTTP request
+4. Call `NewHttpRequest()` or `HttpRequest()` on the manager
+5. The manager finds the appropriate executor and calls its `PrepareRequest()` method
+6. Credentials are injected into the request headers
+7. The request is executed and the response is returned
+
+## How to Run
+
+1. Run the example:
+
+```bash
+go run main.go
+```
+
+2. The example will make two requests to httpbin.org:
+   - A GET request using `NewHttpRequest` + manual execution
+   - A POST request using `HttpRequest` (automatic execution)
+
+3. Both responses will show the injected `Authorization: Bearer demo-api-key` header.
+
+## Expected Output
+
+```
+Prepared request status: 200
+{
+  "headers": {
+    "Authorization": "Bearer demo-api-key",
+    "X-Example": "prepared",
+    ...
+  },
+  ...
+}
+
+Manager HttpRequest status: 200
+{
+  "headers": {
+    "Authorization": "Bearer demo-api-key",
+    "Content-Type": "application/json",
+    "X-Example": "executed",
+    ...
+  },
+  "json": {
+    "hello": "world"
+  },
+  ...
+}
+```
+
+## Use Cases
+
+### Custom API Endpoints
+
+Make requests to provider-specific endpoints that aren't part of the standard completion API:
+
+```go
+// Get model information
+req, _ := core.NewHttpRequest(ctx, auth, http.MethodGet, 
+    "https://api.provider.com/v1/models/model-id", nil, nil)
+resp, _ := http.DefaultClient.Do(req)
+```
+
+### File Uploads
+
+Upload files to providers with automatic authentication:
+
+```go
+file, _ := os.Open("image.png")
+req, _ := http.NewRequestWithContext(ctx, http.MethodPost, 
+    "https://api.provider.com/v1/files", file)
+req.Header.Set("Content-Type", "image/png")
+resp, _ := core.HttpRequest(ctx, auth, req)
+```
+
+### Testing Authentication
+
+Test that your executor's authentication logic works correctly:
+
+```go
+// The httpbin.org/anything endpoint echoes back all headers
+req, _ := core.NewHttpRequest(ctx, auth, http.MethodGet, 
+    "https://httpbin.org/anything", nil, nil)
+resp, _ := http.DefaultClient.Do(req)
+// Verify Authorization header is present in response
+```
+
+## Related Documentation
+
+- [Authentication Manager](/sdk/core/authentication) - Authentication system overview
+- [Executor Interface](/sdk/core/executor) - Detailed executor interface documentation
+- [Custom Provider Example](/sdk/examples/custom-provider) - Full custom provider implementation

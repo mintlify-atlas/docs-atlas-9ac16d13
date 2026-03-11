@@ -1,0 +1,239 @@
+---
+title: Server Configuration
+description: Configure the CLI Proxy API server host, port, TLS, and logging settings
+---
+
+## Overview
+
+The CLI Proxy API server configuration controls how the proxy binds to network interfaces, handles TLS encryption, and manages logging behavior.
+
+## Network Settings
+
+<ParamField path="host" type="string" default="(empty)">
+  Server host/interface to bind to. Default is empty (`""`) to bind all interfaces (IPv4 + IPv6).
+  
+  **Common values:**
+  - `""` - Bind to all interfaces (default)
+  - `"127.0.0.1"` or `"localhost"` - Restrict access to local machine only
+  - Specific IP address - Bind to a particular network interface
+  
+  <Warning>
+    Binding to all interfaces (`""`) exposes the server to your network. Use `"127.0.0.1"` for local-only access.
+  </Warning>
+</ParamField>
+
+<ParamField path="port" type="integer" default="8317">
+  Server port number for the API server.
+  
+  **Example:**
+  ```yaml
+  port: 8317
+  ```
+</ParamField>
+
+## TLS Configuration
+
+<ParamField path="tls" type="object">
+  TLS settings for HTTPS. When enabled, the server listens with the provided certificate and key.
+  
+  <Expandable title="TLS Properties">
+    <ParamField path="tls.enable" type="boolean" default="false">
+      Enable or disable HTTPS server mode.
+    </ParamField>
+    
+    <ParamField path="tls.cert" type="string" default="(empty)">
+      Path to the TLS certificate file (PEM format).
+      
+      **Example:**
+      ```yaml
+      cert: "/path/to/server.crt"
+      ```
+    </ParamField>
+    
+    <ParamField path="tls.key" type="string" default="(empty)">
+      Path to the TLS private key file (PEM format).
+      
+      **Example:**
+      ```yaml
+      key: "/path/to/server.key"
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### TLS Example
+
+```yaml
+tls:
+  enable: true
+  cert: "/etc/ssl/certs/server.crt"
+  key: "/etc/ssl/private/server.key"
+```
+
+<Tip>
+  Use Let's Encrypt or similar services to obtain free TLS certificates for production deployments.
+</Tip>
+
+## Logging Configuration
+
+<ParamField path="debug" type="boolean" default="false">
+  Enable debug logging for detailed diagnostics.
+  
+  **When enabled:**
+  - Verbose request/response logging
+  - Detailed error traces
+  - Performance metrics
+  
+  **Example:**
+  ```yaml
+  debug: true
+  ```
+  
+  <Note>
+    Debug mode may expose sensitive information. Use only in development or troubleshooting.
+  </Note>
+</ParamField>
+
+<ParamField path="logging-to-file" type="boolean" default="false">
+  When true, write application logs to rotating files instead of stdout.
+  
+  **Log location:** `./logs/` directory in the working directory
+  
+  **Example:**
+  ```yaml
+  logging-to-file: true
+  ```
+</ParamField>
+
+<ParamField path="logs-max-total-size-mb" type="integer" default="0">
+  Maximum total size (MB) of log files under the logs directory. When exceeded, the oldest log files are deleted until within the limit.
+  
+  **Values:**
+  - `0` - Unlimited (default)
+  - Positive integer - Size limit in megabytes
+  
+  **Example:**
+  ```yaml
+  logs-max-total-size-mb: 1024  # 1GB limit
+  ```
+</ParamField>
+
+<ParamField path="error-logs-max-files" type="integer" default="10">
+  Maximum number of error log files retained when request logging is disabled. When exceeded, the oldest error log files are deleted.
+  
+  **Values:**
+  - `0` - Disable cleanup
+  - Positive integer - Maximum number of files
+  
+  **Example:**
+  ```yaml
+  error-logs-max-files: 20
+  ```
+</ParamField>
+
+## Performance Settings
+
+<ParamField path="commercial-mode" type="boolean" default="false">
+  When true, disable high-overhead HTTP middleware features to reduce per-request memory usage under high concurrency.
+  
+  **Impact:**
+  - Reduced memory footprint
+  - Disabled detailed request tracking
+  - Optimized for high-throughput scenarios
+  
+  **Example:**
+  ```yaml
+  commercial-mode: true
+  ```
+  
+  <Tip>
+    Enable commercial mode for production deployments handling thousands of concurrent requests.
+  </Tip>
+</ParamField>
+
+<ParamField path="usage-statistics-enabled" type="boolean" default="false">
+  When false, disable in-memory usage statistics aggregation.
+  
+  **Example:**
+  ```yaml
+  usage-statistics-enabled: true
+  ```
+</ParamField>
+
+## Debug Server (pprof)
+
+<ParamField path="pprof" type="object">
+  Enable pprof HTTP debug server for profiling and diagnostics.
+  
+  <Expandable title="pprof Properties">
+    <ParamField path="pprof.enable" type="boolean" default="false">
+      Enable or disable the pprof debug server.
+    </ParamField>
+    
+    <ParamField path="pprof.addr" type="string" default="127.0.0.1:8316">
+      Host:port address for the pprof HTTP server.
+      
+      <Warning>
+        Always bind pprof to localhost (`127.0.0.1`) for security. Never expose to public networks.
+      </Warning>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### pprof Example
+
+```yaml
+pprof:
+  enable: true
+  addr: "127.0.0.1:8316"
+```
+
+**Access pprof endpoints:**
+- `http://127.0.0.1:8316/debug/pprof/` - Index
+- `http://127.0.0.1:8316/debug/pprof/heap` - Memory profiling
+- `http://127.0.0.1:8316/debug/pprof/goroutine` - Goroutine profiling
+
+## Complete Server Configuration Example
+
+```yaml
+# Network Settings
+host: ""  # Bind to all interfaces
+port: 8317
+
+# TLS Configuration
+tls:
+  enable: true
+  cert: "/etc/ssl/certs/server.crt"
+  key: "/etc/ssl/private/server.key"
+
+# Logging
+debug: false
+logging-to-file: true
+logs-max-total-size-mb: 2048  # 2GB limit
+error-logs-max-files: 15
+
+# Performance
+commercial-mode: true
+usage-statistics-enabled: true
+
+# Debug Server
+pprof:
+  enable: false
+  addr: "127.0.0.1:8316"
+```
+
+## Best Practices
+
+<Note>
+  **Development vs Production:**
+  - Development: Use `host: "127.0.0.1"`, `debug: true`, `logging-to-file: false`
+  - Production: Use `host: ""`, `debug: false`, `logging-to-file: true`, `commercial-mode: true`
+</Note>
+
+<Warning>
+  **Security Considerations:**
+  - Always use TLS in production
+  - Never expose pprof to public networks
+  - Rotate log files to prevent disk exhaustion
+  - Use `host: "127.0.0.1"` if proxy is only accessed locally
+</Warning>

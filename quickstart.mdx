@@ -1,80 +1,498 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get up and running with CLI Proxy API in 5 minutes
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
+Get CLI Proxy API running in under 5 minutes. This guide will walk you through installation, configuration, OAuth authentication, and making your first API call.
 
-### Step 1: Set up your local environment
+## What You'll Build
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+By the end of this guide, you'll have:
+- A running CLI Proxy API server
+- OAuth authentication configured for at least one provider
+- Successfully made an API call using your CLI subscription
 
-### Step 2: Deploy your changes
+<Steps>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Step title="Install CLI Proxy API">
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+Choose your preferred installation method:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
 
-### Step 3: Go live
+```bash Docker (Recommended)
+# Pull the latest image
+docker pull eceasy/cli-proxy-api:latest
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+# Create directories for config and auth
+mkdir -p ~/cli-proxy/{config,auths,logs}
 
-## Next steps
+# Download example config
+curl -o ~/cli-proxy/config/config.yaml \
+  https://raw.githubusercontent.com/router-for-me/CLIProxyAPI/main/config.example.yaml
+```
 
-Now that you have your docs running, explore these key features:
+```bash Binary (Linux/macOS)
+# Download the latest release for your platform
+# Visit: https://github.com/router-for-me/CLIProxyAPI/releases
 
-<CardGroup cols={2}>
+# Example for Linux AMD64
+wget https://github.com/router-for-me/CLIProxyAPI/releases/latest/download/cli-proxy-api_linux_amd64.tar.gz
+tar -xzf cli-proxy-api_linux_amd64.tar.gz
+chmod +x cli-proxy-api
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+# Move to your preferred location
+sudo mv cli-proxy-api /usr/local/bin/
+```
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+```bash Build from Source
+# Requires Go 1.26 or later
+git clone https://github.com/router-for-me/CLIProxyAPI.git
+cd CLIProxyAPI
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+# Build the binary
+go build -o cli-proxy-api ./cmd/server/
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+# Run directly
+./cli-proxy-api
+```
 
-</CardGroup>
+</CodeGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The Docker method is recommended for production deployments as it includes automatic updates and easier management.
+</Note>
+
+</Step>
+
+<Step title="Configure the Server">
+
+Create a `config.yaml` file with your basic settings:
+
+```yaml config.yaml
+# Server Configuration
+host: ""  # Empty = bind to all interfaces
+port: 8317
+
+# Authentication directory (OAuth tokens stored here)
+auth-dir: "~/.cli-proxy-api"
+
+# API keys for client authentication
+api-keys:
+  - "your-secure-api-key-here"
+  - "another-key-for-different-client"
+
+# Enable debug logging (optional)
+debug: false
+
+# Routing strategy for multi-account load balancing
+routing:
+  strategy: "round-robin"  # Options: round-robin, fill-first
+
+# Retry configuration
+request-retry: 3
+max-retry-credentials: 0  # 0 = try all available credentials
+```
+
+<Tip>
+  Generate secure API keys using: `openssl rand -hex 32`
+</Tip>
+
+**Key Configuration Options:**
+
+| Option | Description | Default |
+|--------|-------------|-------|
+| `host` | Network interface to bind (empty = all) | `""` |
+| `port` | HTTP server port | `8317` |
+| `auth-dir` | Directory for OAuth tokens | `~/.cli-proxy-api` |
+| `api-keys` | Client authentication keys | `[]` |
+| `debug` | Enable verbose logging | `false` |
+
+For advanced configuration options, see the [Server Configuration](/configuration/server) guide.
+
+</Step>
+
+<Step title="Start the Server">
+
+Launch CLI Proxy API with your configuration:
+
+<CodeGroup>
+
+```bash Docker
+docker run -d \
+  --name cli-proxy-api \
+  -p 8317:8317 \
+  -v ~/cli-proxy/config/config.yaml:/CLIProxyAPI/config.yaml \
+  -v ~/cli-proxy/auths:/root/.cli-proxy-api \
+  -v ~/cli-proxy/logs:/CLIProxyAPI/logs \
+  eceasy/cli-proxy-api:latest
+
+# View logs
+docker logs -f cli-proxy-api
+```
+
+```bash Binary
+# Start with default config.yaml in current directory
+./cli-proxy-api
+
+# Or specify a config file path
+./cli-proxy-api -config /path/to/config.yaml
+```
+
+```bash Docker Compose
+# Create docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cli-proxy-api
+    ports:
+      - "8317:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs
+    restart: unless-stopped
+
+# Start the service
+docker-compose up -d
+```
+
+</CodeGroup>
+
+You should see output like:
+
+```
+CLIProxyAPI Version: v6.x.x, Commit: abc123, BuiltAt: 2026-03-10
+INFO[0000] Server starting on :8317
+```
+
+</Step>
+
+<Step title="Authenticate with a Provider">
+
+Authenticate with at least one OAuth provider. We'll use Google Gemini as an example:
+
+<Tabs>
+  <Tab title="Gemini (Google)">
+
+```bash
+# For Docker
+docker exec -it cli-proxy-api ./CLIProxyAPI -login
+
+# For binary installation
+./cli-proxy-api -login
+```
+
+This will:
+1. Open your browser automatically
+2. Prompt you to sign in with your Google account
+3. Save OAuth tokens to `~/.cli-proxy-api/gemini_*.json`
+
+<Note>
+  Use the `-no-browser` flag if you're on a headless server. You'll get a URL to open manually.
+</Note>
+
+**For multiple accounts:**
+
+```bash
+# Add a second Gemini account
+./cli-proxy-api -login
+
+# Add a third Gemini account
+./cli-proxy-api -login
+```
+
+Each login creates a new credential file, enabling automatic load balancing.
+
+  </Tab>
+  
+  <Tab title="Claude Code">
+
+```bash
+# For Docker
+docker exec -it cli-proxy-api ./CLIProxyAPI -claude-login
+
+# For binary installation  
+./cli-proxy-api -claude-login
+```
+
+The CLI will open your browser to authenticate with Claude Code OAuth.
+
+  </Tab>
+  
+  <Tab title="OpenAI Codex">
+
+```bash
+# Standard OAuth flow
+./cli-proxy-api -codex-login
+
+# Device code flow (for headless servers)
+./cli-proxy-api -codex-device-login
+```
+
+For device code flow, you'll receive a code to enter at the provided URL.
+
+  </Tab>
+  
+  <Tab title="Qwen Code">
+
+```bash
+./cli-proxy-api -qwen-login
+```
+
+Authenticates with Alibaba's Qwen Code service via OAuth.
+
+  </Tab>
+</Tabs>
+
+<Warning>
+  OAuth tokens are stored in `auth-dir` (default: `~/.cli-proxy-api/`). Keep these files secure and never commit them to version control.
+</Warning>
+
+</Step>
+
+<Step title="Make Your First API Call">
+
+Test your setup with a simple API request:
+
+```bash cURL
+curl http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-secure-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [
+      {"role": "user", "content": "Hello! Can you help me test CLI Proxy API?"}
+    ]
+  }'
+```
+
+**Expected Response:**
+
+```json
+{
+  "id": "chatcmpl-123456",
+  "object": "chat.completion",
+  "created": 1709251200,
+  "model": "gemini-2.5-pro",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! I'm working perfectly through CLI Proxy API. How can I assist you today?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 20,
+    "total_tokens": 35
+  }
+}
+```
+
+<Tip>
+  Replace `your-secure-api-key-here` with one of the API keys you defined in `config.yaml`.
+</Tip>
+
+**Test with Python:**
+
+```python python
+import openai
+
+# Configure OpenAI client to use CLI Proxy API
+client = openai.OpenAI(
+    api_key="your-secure-api-key-here",
+    base_url="http://localhost:8317/v1"
+)
+
+# Make a request
+response = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[
+        {"role": "user", "content": "Hello from Python!"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+**Test with Streaming:**
+
+```python python (streaming)
+import openai
+
+client = openai.OpenAI(
+    api_key="your-secure-api-key-here",
+    base_url="http://localhost:8317/v1"
+)
+
+stream = client.chat.completions.create(
+    model="gemini-2.5-pro",
+    messages=[{"role": "user", "content": "Count to 5 slowly"}],
+    stream=True
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+```
+
+</Step>
+
+</Steps>
+
+## Verify Your Setup
+
+Check that everything is working correctly:
+
+### 1. List Available Models
+
+```bash
+curl http://localhost:8317/v1/models \
+  -H "Authorization: Bearer your-secure-api-key-here"
+```
+
+You should see all models from your authenticated providers.
+
+### 2. Check Server Health
+
+```bash
+curl http://localhost:8317/health
+```
+
+### 3. Review Logs
+
+<CodeGroup>
+
+```bash Docker
+docker logs cli-proxy-api
+```
+
+```bash Binary
+# Logs output to stdout by default
+# To enable file logging, add to config.yaml:
+logging-to-file: true
+
+# View logs
+tail -f logs/app.log
+```
+
+</CodeGroup>
+
+## Common Issues
+
+<AccordionGroup>
+
+<Accordion title="OAuth browser doesn't open">
+  
+**Solution:** Use the `-no-browser` flag:
+
+```bash
+./cli-proxy-api -login -no-browser
+```
+
+Copy the URL shown and open it in your browser manually.
+
+</Accordion>
+
+<Accordion title="Port 8317 already in use">
+
+**Solution:** Change the port in `config.yaml`:
+
+```yaml
+port: 8318  # Use a different port
+```
+
+Then update your client requests to use the new port.
+
+</Accordion>
+
+<Accordion title="API returns 401 Unauthorized">
+
+**Causes:**
+- Incorrect API key in Authorization header
+- API key not defined in `config.yaml`
+
+**Solution:** Verify your API key:
+
+```yaml config.yaml
+api-keys:
+  - "your-secure-api-key-here"  # Must match exactly
+```
+
+</Accordion>
+
+<Accordion title="No models available after OAuth">
+
+**Solution:** Verify OAuth tokens were saved:
+
+```bash
+ls -la ~/.cli-proxy-api/
+```
+
+You should see files like `gemini_account1.json`, `claude_account1.json`, etc.
+
+If missing, re-run the login command:
+
+```bash
+./cli-proxy-api -login
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Next Steps
+
+Now that you have CLI Proxy API running:
+
+<CardGroup cols={2}>
+  <Card title="Add More Accounts" icon="users" href="/oauth/gemini">
+    Set up multiple accounts for load balancing across providers
+  </Card>
+  <Card title="Configure Model Mappings" icon="route" href="/configuration/model-mappings">
+    Create custom model aliases and route unavailable models
+  </Card>
+  <Card title="Integrate with Your Tools" icon="plug" href="/integrations/cursor">
+    Connect Cursor, Cline, or other AI coding tools
+  </Card>
+  <Card title="Deploy to Production" icon="server" href="/deployment/docker">
+    Learn best practices for production deployments
+  </Card>
+</CardGroup>
+
+## Alternative: Quick Docker Setup
+
+If you prefer a fully automated Docker setup:
+
+```bash
+# Clone the repository
+git clone https://github.com/router-for-me/CLIProxyAPI.git
+cd CLIProxyAPI
+
+# Copy example config
+cp config.example.yaml config.yaml
+
+# Edit config.yaml with your API keys
+vim config.yaml
+
+# Start with docker-compose
+docker-compose up -d
+
+# Perform OAuth login
+docker exec -it cli-proxy-api ./CLIProxyAPI -login
+
+# View logs
+docker-compose logs -f
+```
+
+This gives you a complete setup with persistent storage for configs, auth tokens, and logs.
+
+<Note>
+  For production deployments with high availability, see our [Cloud Deployment](/deployment/cloud) guide.
 </Note>

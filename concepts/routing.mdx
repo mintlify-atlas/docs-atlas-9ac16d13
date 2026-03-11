@@ -1,0 +1,655 @@
+---
+title: 'Routing & Load Balancing'
+description: 'Understanding request routing, credential selection, and automatic failover'
+---
+
+## Overview
+
+CLI Proxy API intelligently routes requests across multiple credentials to maximize availability and balance load. The routing system handles:
+
+- **Credential selection** - Choosing which account to use
+- **Load balancing** - Distributing requests evenly
+- **Quota management** - Handling rate limits and daily quotas
+- **Automatic failover** - Retrying with different credentials
+- **Model aliasing** - Mapping model names
+
+## Routing Strategies
+
+Two built-in strategies control credential selection:
+
+### Round-Robin (Default)
+
+Distributes requests evenly across all available credentials:
+
+```yaml config.yaml
+routing:
+  strategy: "round-robin"
+```
+
+**How it works**:
+
+```
+Request 1 → Account A
+Request 2 → Account B
+Request 3 → Account C
+Request 4 → Account A  (cycles back)
+Request 5 → Account B
+...
+```
+
+<CodeGroup>
+```go sdk/cliproxy/auth/selector.go
+// RoundRobinSelector provides provider-scoped round-robin selection.
+type RoundRobinSelector struct {
+    mu      sync.Mutex
+    cursors map[string]int
+    maxKeys int
+}
+
+func (s *RoundRobinSelector) Pick(ctx context.Context, 
+    provider, model string, opts Options, auths []*Auth) (*Auth, error) {
+    
+    // Filter ready auths
+    ready := filterReady(auths)
+    if len(ready) == 0 {
+        return nil, ErrNoCredentials
+    }
+    
+    // Get cursor for this provider+model
+    key := provider + "/" + model
+    s.mu.Lock()
+    cursor := s.cursors[key]
+    s.cursors[key] = (cursor + 1) % len(ready)
+    s.mu.Unlock()
+    
+    return ready[cursor], nil
+}
+```
+</CodeGroup>
+
+**Best for**:
+- Even distribution across accounts
+- Maximizing total quota usage
+- Avoiding concentration on single account
+
+### Fill-First
+
+Uses the first credential until it hits quota, then moves to next:
+
+```yaml config.yaml
+routing:
+  strategy: "fill-first"
+```
+
+**How it works**:
+
+```
+Request 1-100  → Account A
+Request 101    → Account A (quota exceeded)
+Request 102-200 → Account B
+Request 201    → Account B (quota exceeded)
+Request 202-300 → Account C
+...
+```
+
+<CodeGroup>
+```go sdk/cliproxy/auth/selector.go
+// FillFirstSelector selects the first available credential.
+// This "burns" one account before moving to the next.
+type FillFirstSelector struct{}
+
+func (FillFirstSelector) Pick(ctx context.Context, 
+    provider, model string, opts Options, auths []*Auth) (*Auth, error) {
+    
+    // Filter ready auths and sort by priority
+    ready := filterReady(auths)
+    if len(ready) == 0 {
+        return nil, ErrNoCredentials
+    }
+    
+    sortByPriority(ready)
+    return ready[0], nil
+}
+```
+</CodeGroup>
+
+**Best for**:
+- Staggering rolling-window limits (e.g., chat message caps)
+- Minimizing active accounts
+- Preserving specific accounts for peak times
+
+## Credential States
+
+Each credential can be in one of four states:
+
+<CodeGroup>
+```go sdk/cliproxy/auth/scheduler.go
+type scheduledState int
+
+const (
+    scheduledStateReady      // Available for requests
+    scheduledStateCooldown   // Quota exceeded, waiting
+    scheduledStateBlocked    // Temporarily disabled
+    scheduledStateDisabled   // Permanently disabled
+)
+```
+</CodeGroup>
+
+### Ready
+
+Credential is available and will be selected by routing strategy.
+
+### Cooldown
+
+Credential exceeded quota and is temporarily blocked:
+
+```go sdk/cliproxy/auth/conductor.go
+const (
+    quotaBackoffBase = time.Second
+    quotaBackoffMax  = 30 * time.Minute
+)
+```
+
+**Cooldown behavior**:
+
+1. **Detect quota error** (HTTP 429 or provider-specific message)
+2. **Calculate backoff** using exponential strategy:
+   ```
+   backoff = min(quotaBackoffBase * 2^failures, quotaBackoffMax)
+   ```
+3. **Enter cooldown** for calculated duration
+4. **Return to ready** after cooldown expires
+
+**Example cooldown sequence**:
+```
+Failure 1 → 1 second cooldown
+Failure 2 → 2 seconds cooldown
+Failure 3 → 4 seconds cooldown
+Failure 4 → 8 seconds cooldown
+...
+Failure N → 30 minutes cooldown (max)
+```
+
+### Blocked
+
+Manually blocked via Management API or attributes.
+
+### Disabled
+
+Permanently disabled (e.g., deleted auth file).
+
+## Priority-Based Selection
+
+Credentials can have priority levels:
+
+```json ~/.cli-proxy-api/gemini_oauth_high-priority@gmail.com.json
+{
+  "access_token": "...",
+  "attributes": {
+    "priority": "10"  // Higher = selected first
+  }
+}
+```
+
+```json ~/.cli-proxy-api/gemini_oauth_low-priority@gmail.com.json
+{
+  "access_token": "...",
+  "attributes": {
+    "priority": "1"
+  }
+}
+```
+
+**Selection order**:
+
+1. **Priority 10** accounts selected first
+2. **Priority 1** accounts used as fallback
+3. **Priority 0** (default) used last
+
+Round-robin operates **within each priority level**:
+
+```
+Priority 10: Account A, Account B
+Priority 1:  Account C, Account D
+
+Request flow:
+A → B → A → B → ... (until all priority 10 hit quota)
+C → D → C → D → ... (fallback to priority 1)
+```
+
+## Model Prefix Routing
+
+Force specific credentials using model prefixes:
+
+### Configuring Prefixes
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSyPersonal..."
+    prefix: "personal"
+  - api-key: "AIzaSyWork..."
+    prefix: "work"
+  - api-key: "AIzaSyTeam..."
+    prefix: "team"
+```
+
+### Using Prefixes
+
+```bash
+# Use personal account
+curl -X POST http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "personal/gemini-2.5-pro",
+    "messages": [...]
+  }'
+
+# Use work account
+curl -X POST http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "work/gemini-2.5-pro",
+    "messages": [...]
+  }'
+```
+
+### Force Prefix Mode
+
+Require prefixes for all requests:
+
+```yaml config.yaml
+force-model-prefix: true
+```
+
+When enabled, unprefixed requests only use credentials without a prefix.
+
+## Model Aliasing
+
+Map client model names to provider model names:
+
+### Global OAuth Aliases
+
+```yaml config.yaml
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"          # Upstream name
+      alias: "g2.5p"                  # Client alias
+      fork: false                     # Replace original
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "cs4.5"
+      fork: true                      # Keep both
+  codex:
+    - name: "gpt-5"
+      alias: "g5"
+```
+
+**fork: false** (default):
+```
+Client sees: "g2.5p"
+Client does NOT see: "gemini-2.5-pro"
+Request to "g2.5p" → upstream "gemini-2.5-pro"
+```
+
+**fork: true**:
+```
+Client sees: "cs4.5" AND "claude-sonnet-4-5-20250929"
+Request to either → upstream "claude-sonnet-4-5-20250929"
+```
+
+### API Key Aliases
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    models:
+      - name: "gemini-2.5-flash"      # Upstream name
+        alias: "gemini-flash"         # Client alias
+      - name: "gemini-2.5-pro"
+        alias: "gemini-pro"
+
+codex-api-key:
+  - api-key: "sk-atSM..."
+    models:
+      - name: "gpt-5-codex"           # Upstream name
+        alias: "codex-latest"         # Client alias
+```
+
+### Model Pools (Internal Failover)
+
+Map multiple upstream models to the same alias:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    models:
+      # All map to "best-model" alias
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "best-model"
+      - name: "google/gemini-pro"
+        alias: "best-model"
+      - name: "openai/gpt-4"
+        alias: "best-model"
+```
+
+**Behavior**:
+
+1. Client requests `best-model`
+2. Round-robin selects: `claude-3.5-sonnet`
+3. If fails before producing output → retry with `gemini-pro`
+4. If fails again → retry with `gpt-4`
+5. If all fail → return error
+
+## Model Exclusion
+
+Hide models from the model list:
+
+### OAuth Exclusions
+
+```yaml config.yaml
+oauth-excluded-models:
+  gemini-cli:
+    - "gemini-2.5-pro"     # Exact match
+    - "gemini-2.5-*"       # Prefix wildcard
+    - "*-preview"          # Suffix wildcard
+    - "*flash*"            # Substring wildcard
+  claude:
+    - "claude-3-5-haiku-20241022"
+    - "*-thinking"
+  codex:
+    - "gpt-5-codex-mini"
+    - "*-mini"
+```
+
+### API Key Exclusions
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy..."
+    excluded-models:
+      - "gemini-2.5-pro"
+      - "*-preview"
+```
+
+**Wildcard patterns**:
+- `model-name` - Exact match
+- `prefix-*` - Matches `prefix-anything`
+- `*-suffix` - Matches `anything-suffix`
+- `*substring*` - Matches `any-substring-here`
+
+## Automatic Failover
+
+When a request fails, CLI Proxy API automatically retries:
+
+### Retry Configuration
+
+```yaml config.yaml
+request-retry: 3              # Retry failed requests 3 times
+max-retry-credentials: 5      # Try up to 5 different credentials
+max-retry-interval: 30        # Wait max 30 seconds for cooldown
+```
+
+### Retry Logic
+
+<CodeGroup>
+```go sdk/cliproxy/auth/conductor.go
+// Retry controls request retry behavior
+type Manager struct {
+    requestRetry        atomic.Int32  // Number of retries
+    maxRetryCredentials atomic.Int32  // Max credentials to try
+    maxRetryInterval    atomic.Int64  // Max cooldown wait (seconds)
+}
+```
+</CodeGroup>
+
+**Retry flow**:
+
+1. **Attempt 1**: Credential A → Fails (quota exceeded)
+2. **Attempt 2**: Credential B → Fails (503 error)
+3. **Attempt 3**: Credential C → Fails (timeout)
+4. **Attempt 4**: Credential D → Success ✓
+
+**Retry conditions**:
+
+Retries occur for these HTTP status codes:
+- `403` - Forbidden
+- `408` - Request Timeout
+- `429` - Too Many Requests (quota)
+- `500` - Internal Server Error
+- `502` - Bad Gateway
+- `503` - Service Unavailable
+- `504` - Gateway Timeout
+
+### Quota Failover
+
+Special handling for quota-related errors:
+
+```yaml config.yaml
+quota-exceeded:
+  switch-project: true         # Try other credentials
+  switch-preview-model: true   # Try preview models if available
+```
+
+**switch-project**:
+
+When `true`, quota errors trigger immediate retry with next credential:
+
+```
+Request → Account A → Quota exceeded
+       → Account B → Quota exceeded
+       → Account C → Success
+```
+
+**switch-preview-model**:
+
+When `true`, falls back to preview models:
+
+```
+Request: gemini-2.5-pro → Quota exceeded
+      → gemini-2.5-pro-preview → Success
+```
+
+## Multi-Provider Routing
+
+Some models are available from multiple providers:
+
+```yaml config.yaml
+# Gemini from multiple sources
+gemini-api-key:
+  - api-key: "AIzaSyOfficial..."  # Official API
+
+vertex-api-key:
+  - api-key: "vk-relay1..."       # Relay service 1
+  - api-key: "vk-relay2..."       # Relay service 2
+
+# All provide "gemini-2.5-pro"
+```
+
+**Selection order**:
+
+1. Filter to credentials offering the requested model
+2. Apply routing strategy within available credentials
+3. Round-robin across providers (not just accounts)
+
+## Request Metadata
+
+Control routing via request metadata:
+
+### Pin to Specific Credential
+
+```go
+opts := executor.Options{
+    Metadata: map[string]any{
+        executor.PinnedAuthMetadataKey: "auth-id-123",
+    },
+}
+```
+
+Forces the request to use credential with ID `auth-id-123`.
+
+### Track Selected Credential
+
+```go
+var selectedAuthID string
+opts := executor.Options{
+    Metadata: map[string]any{
+        executor.SelectedAuthCallbackMetadataKey: func(authID string) {
+            selectedAuthID = authID
+        },
+    },
+}
+```
+
+Callback receives the ID of the selected credential.
+
+## Model Registry
+
+The registry dynamically tracks which credentials can serve which models:
+
+<CodeGroup>
+```go internal/registry/model_registry.go
+type ModelRegistration struct {
+    Info  *ModelInfo
+    Count int  // Number of credentials offering this model
+    
+    // Quota tracking
+    QuotaExceededClients map[string]*time.Time
+    
+    // Provider breakdown
+    Providers map[string]int  // provider → count
+    
+    // Suspended credentials
+    SuspendedClients map[string]string
+}
+```
+</CodeGroup>
+
+**Dynamic visibility**:
+
+```
+3 credentials offer "gemini-2.5-pro"
+↓
+Model appears in /v1/models
+
+2 credentials hit quota
+↓
+Model still visible (1 remaining)
+
+Last credential hits quota
+↓
+Model hidden from /v1/models
+```
+
+## Streaming Bootstrap Retries
+
+For streaming requests, retries happen before the first byte is sent:
+
+```yaml config.yaml
+streaming:
+  keepalive-seconds: 15     # Send blank lines every 15s
+  bootstrap-retries: 1      # Retry once before streaming starts
+```
+
+**Bootstrap retry flow**:
+
+1. **Attempt 1**: Credential A → Error before streaming
+2. **Attempt 2**: Credential B → Starts streaming → Success
+
+Once streaming starts, no more retries (client already receiving data).
+
+## Performance Considerations
+
+### Scheduler Optimization
+
+The scheduler pre-builds selection views:
+
+```go sdk/cliproxy/auth/scheduler.go
+// Per-model scheduler tracks ready credentials
+type modelScheduler struct {
+    entries         map[string]*scheduledAuth
+    priorityOrder   []int
+    readyByPriority map[int]*readyBucket  // Pre-sorted
+    blocked         cooldownQueue
+}
+```
+
+Benefits:
+- O(1) credential selection (no sorting on hot path)
+- Efficient priority handling
+- Fast cooldown management
+
+### Concurrency
+
+Routing decisions are lock-free for read paths:
+
+```go sdk/cliproxy/auth/conductor.go
+type Manager struct {
+    mu    sync.RWMutex
+    auths map[string]*Auth  // Read-locked during selection
+}
+```
+
+Multiple requests select credentials concurrently without contention.
+
+## Debugging Routing
+
+Enable debug logging:
+
+```yaml config.yaml
+debug: true
+```
+
+Logs include:
+- Credential selection decisions
+- Cooldown state changes
+- Retry attempts
+- Provider routing
+
+Example log:
+```
+[DEBUG] Selecting credential for model=gemini-2.5-pro provider=gemini-cli
+[DEBUG] Ready credentials: 3
+[DEBUG] Selected credential: auth-id-abc123 (priority=10)
+[DEBUG] Credential auth-id-xyz789 entered cooldown for 4s
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use round-robin for even distribution">
+    Round-robin maximizes total quota usage by spreading load across all accounts evenly.
+  </Accordion>
+  
+  <Accordion title="Use fill-first for rolling-window limits">
+    Fill-first prevents hitting multiple accounts' daily message limits simultaneously.
+  </Accordion>
+  
+  <Accordion title="Set priorities for fallback accounts">
+    Keep low-priority accounts as emergency backup when primary accounts hit quota.
+  </Accordion>
+  
+  <Accordion title="Use prefixes for team isolation">
+    Assign each team a prefixed credential pool to prevent quota conflicts.
+  </Accordion>
+  
+  <Accordion title="Configure retry limits">
+    Set `max-retry-credentials` to prevent excessive retry attempts that delay errors.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/server">
+    Configure routing behavior
+  </Card>
+  <Card title="Model Mappings" icon="shuffle" href="/configuration/model-mappings">
+    Set up model aliases and pools
+  </Card>
+  <Card title="Providers" icon="cloud" href="/concepts/providers">
+    Learn about provider-specific features
+  </Card>
+  <Card title="Management API" icon="code" href="/api/management/overview">
+    Monitor routing via API
+  </Card>
+</CardGroup>

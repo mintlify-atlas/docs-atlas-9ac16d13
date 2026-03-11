@@ -1,0 +1,354 @@
+---
+title: 'Authentication'
+description: 'Learn how to authenticate requests to the CLI Proxy API'
+---
+
+## Overview
+
+The CLI Proxy API supports multiple authentication methods depending on which endpoints you're accessing:
+
+1. **API Key Authentication** - For main API endpoints (`/v1/*`, `/v1beta/*`)
+2. **Management Secret** - For management endpoints (`/v0/management/*`)
+3. **WebSocket Authentication** - Optional authentication for WebSocket connections
+4. **Local Password** - For localhost-only management access (TUI mode)
+
+## API Key Authentication
+
+### Configuration
+
+API keys are configured in your `config.yaml` file:
+
+```yaml config.yaml
+api-keys:
+  - "your-api-key-1"
+  - "your-api-key-2"
+  - "your-api-key-3"
+```
+
+### Using API Keys
+
+Include your API key in the `Authorization` header as a Bearer token:
+
+```bash cURL Example
+curl https://localhost:8317/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key-1" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
+```
+
+```python Python Example
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:8317/v1",
+    api_key="your-api-key-1"
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-flash",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+```javascript JavaScript Example
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:8317/v1',
+  apiKey: 'your-api-key-1'
+});
+
+const response = await client.chat.completions.create({
+  model: 'gemini-2.5-flash',
+  messages: [{ role: 'user', content: 'Hello!' }]
+});
+```
+
+### No Authentication Mode
+
+When no API keys are configured in `config.yaml`, the API allows all requests without authentication:
+
+```yaml config.yaml
+# Empty or no api-keys section = no authentication required
+api-keys: []
+```
+
+<Warning>
+This mode should only be used in development or when the API is behind a secure gateway.
+</Warning>
+
+## Management API Authentication
+
+Management endpoints require a secret key for authentication.
+
+### Configuration
+
+Set the management secret key in `config.yaml`:
+
+```yaml config.yaml
+remote-management:
+  # Management key - required for ALL management endpoints
+  secret-key: "your-secure-management-key"
+  
+  # Whether to allow remote (non-localhost) access
+  allow-remote: false
+```
+
+<Info>
+If `secret-key` is empty, all `/v0/management/*` endpoints return `404 Not Found`.
+</Info>
+
+### Environment Variable
+
+You can also set the management password via environment variable:
+
+```bash
+export MANAGEMENT_PASSWORD="your-secure-management-key"
+```
+
+The environment variable takes precedence over the config file.
+
+### Using Management Authentication
+
+Include the secret key in the `Authorization` header:
+
+```bash Management API Request
+curl http://localhost:8317/v0/management/config \
+  -H "Authorization: Bearer your-secure-management-key"
+```
+
+```bash Get Usage Statistics
+curl http://localhost:8317/v0/management/usage \
+  -H "Authorization: Bearer your-secure-management-key"
+```
+
+```bash Update Configuration
+curl -X PUT http://localhost:8317/v0/management/config.yaml \
+  -H "Authorization: Bearer your-secure-management-key" \
+  -H "Content-Type: application/x-yaml" \
+  --data-binary @config.yaml
+```
+
+### Localhost-Only Access
+
+By default, management endpoints are restricted to localhost:
+
+```yaml config.yaml
+remote-management:
+  allow-remote: false  # Only localhost can access (default)
+```
+
+To allow remote access:
+
+```yaml config.yaml
+remote-management:
+  allow-remote: true  # Allow remote management access
+```
+
+<Warning>
+Enabling remote management access exposes sensitive configuration endpoints to the network. Ensure you use a strong secret key and proper network security.
+</Warning>
+
+## WebSocket Authentication
+
+WebSocket connections can optionally require authentication.
+
+### Configuration
+
+```yaml config.yaml
+# Enable authentication for WebSocket endpoints
+ws-auth: true
+```
+
+When `ws-auth: true`, WebSocket connections must include the API key in the request.
+
+### WebSocket Authentication Example
+
+```javascript WebSocket with Auth
+const ws = new WebSocket('ws://localhost:8317/v1/responses', {
+  headers: {
+    'Authorization': 'Bearer your-api-key-1'
+  }
+});
+```
+
+For the OpenAI Responses WebSocket endpoint:
+
+```bash cURL WebSocket Upgrade
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Authorization: Bearer your-api-key-1" \
+  http://localhost:8317/v1/responses
+```
+
+## Provider-Specific API Keys
+
+In addition to client authentication, you can configure upstream provider API keys:
+
+### Gemini API Keys
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    prefix: "team-a"  # Optional: require "team-a/model-name"
+    base-url: "https://generativelanguage.googleapis.com"
+```
+
+### Claude API Keys
+
+```yaml config.yaml
+claude-api-key:
+  - api-key: "sk-ant-..."
+    prefix: "production"
+    base-url: "https://api.anthropic.com"
+```
+
+### Codex API Keys
+
+```yaml config.yaml
+codex-api-key:
+  - api-key: "sk-..."
+    prefix: "dev"
+```
+
+### OpenAI-Compatible Providers
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+```
+
+## OAuth Authentication
+
+The API supports OAuth flows for various providers. OAuth callback endpoints:
+
+- `GET /anthropic/callback` - Claude OAuth
+- `GET /codex/callback` - Codex OAuth
+- `GET /google/callback` - Google/Gemini OAuth
+- `GET /iflow/callback` - iFlow OAuth
+- `GET /antigravity/callback` - Antigravity OAuth
+
+### Initiating OAuth
+
+Use management endpoints to start OAuth flows:
+
+```bash Get Anthropic Auth URL
+curl http://localhost:8317/v0/management/anthropic-auth-url \
+  -H "Authorization: Bearer your-management-secret"
+```
+
+The response contains an authorization URL to visit in your browser. After authorization, the callback endpoint receives the OAuth tokens.
+
+## Authentication Directory
+
+OAuth tokens and authentication files are stored in the auth directory:
+
+```yaml config.yaml
+auth-dir: "~/.cli-proxy-api"  # Supports ~ for home directory
+```
+
+Authentication files can be managed via the Management API:
+
+```bash List Auth Files
+curl http://localhost:8317/v0/management/auth-files \
+  -H "Authorization: Bearer your-management-secret"
+```
+
+```bash Upload Auth File
+curl -X POST http://localhost:8317/v0/management/auth-files \
+  -H "Authorization: Bearer your-management-secret" \
+  -F "file=@credentials.json" \
+  -F "channel=vertex" \
+  -F "prefix=prod"
+```
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Use Strong Keys">
+    Generate cryptographically secure random keys for both API keys and management secrets:
+    ```bash
+    openssl rand -hex 32
+    ```
+  </Step>
+  
+  <Step title="Restrict Management Access">
+    Keep `allow-remote: false` unless you specifically need remote management access.
+  </Step>
+  
+  <Step title="Enable TLS">
+    Use HTTPS/TLS in production environments:
+    ```yaml
+    tls:
+      enable: true
+      cert: "/path/to/cert.pem"
+      key: "/path/to/key.pem"
+    ```
+  </Step>
+  
+  <Step title="Use Environment Variables">
+    Store sensitive keys in environment variables rather than config files:
+    ```bash
+    export MANAGEMENT_PASSWORD="your-secret"
+    ```
+  </Step>
+  
+  <Step title="Rotate Keys Regularly">
+    Implement a key rotation policy for API keys and management secrets.
+  </Step>
+</Steps>
+
+## Error Responses
+
+### 401 Unauthorized
+
+Returned when authentication fails:
+
+```json
+{
+  "error": {
+    "message": "invalid password",
+    "type": "authentication_error"
+  }
+}
+```
+
+### 404 Not Found (Management API)
+
+Returned when management endpoints are accessed but no secret key is configured:
+
+```json
+{
+  "error": {
+    "message": "Not Found",
+    "type": "not_found"
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Chat Completions" icon="message" href="/api/openai/chat">
+    Start making authenticated API requests
+  </Card>
+  <Card title="Management API" icon="gear" href="/api/management/overview">
+    Manage API configuration and credentials
+  </Card>
+  <Card title="Model Configuration" icon="sliders" href="/configuration/model-mappings">
+    Configure provider API keys and models
+  </Card>
+  <Card title="Security" icon="shield" href="/configuration/server">
+    Learn about security best practices
+  </Card>
+</CardGroup>

@@ -1,0 +1,399 @@
+---
+title: OAuth Session Endpoints
+description: Manage OAuth authentication flows for provider integrations
+---
+
+The OAuth endpoints handle authentication flows for providers that use OAuth 2.0, including Anthropic (Claude), Google (Gemini), Codex, and others.
+
+## OAuth Flow Overview
+
+1. Client requests authorization URL from management API
+2. User opens URL and completes OAuth flow with provider
+3. Provider redirects to callback with `code` and `state`
+4. Client posts callback data to management API
+5. Management API writes callback file for processing
+6. Client polls for authentication status
+
+## Supported Providers
+
+- **anthropic** / **claude** - Anthropic Claude API
+- **codex** / **openai** - OpenAI Codex API  
+- **gemini** / **google** - Google Gemini API
+- **antigravity** / **anti-gravity** - AntiGravity API
+- **qwen** - Qwen API
+- **iflow** / **i-flow** - iFlow API
+- **kimi** - Kimi API
+
+## Get Authorization URL
+
+Get the OAuth authorization URL for a specific provider.
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/{provider}-auth-url`
+</ParamField>
+
+### Available Endpoints
+
+- `GET /v0/management/anthropic-auth-url`
+- `GET /v0/management/codex-auth-url`
+- `GET /v0/management/gemini-cli-auth-url`
+- `GET /v0/management/antigravity-auth-url`
+- `GET /v0/management/qwen-auth-url`
+- `GET /v0/management/kimi-auth-url`
+- `GET /v0/management/iflow-auth-url`
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/anthropic-auth-url
+```
+
+### Response
+
+<ResponseField name="auth_url" type="string">
+  OAuth authorization URL to redirect user to
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  OAuth state parameter for CSRF protection (store this for callback validation)
+</ResponseField>
+
+<ResponseField name="expires_at" type="number">
+  Unix timestamp when the state expires (10 minutes from creation)
+</ResponseField>
+
+```json
+{
+  "auth_url": "https://console.anthropic.com/oauth/authorize?client_id=...&state=abc123",
+  "state": "abc123def456",
+  "expires_at": 1710172800
+}
+```
+
+## Submit OAuth Callback
+
+<ParamField path="POST" type="endpoint">
+  `/v0/management/oauth-callback`
+</ParamField>
+
+Submits the OAuth callback data received from the provider after user authorization.
+
+### Request
+
+```bash
+curl -X POST \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "anthropic",
+    "state": "abc123def456",
+    "code": "oauth_code_from_provider"
+  }' \
+  http://localhost:8317/v0/management/oauth-callback
+```
+
+### Request Body
+
+<ParamField name="provider" type="string" required>
+  Provider name (anthropic, codex, gemini, etc.)
+</ParamField>
+
+<ParamField name="state" type="string" required>
+  OAuth state parameter from authorization request
+</ParamField>
+
+<ParamField name="code" type="string">
+  Authorization code from provider (required if no error)
+</ParamField>
+
+<ParamField name="error" type="string">
+  Error message from provider (required if no code)
+</ParamField>
+
+<ParamField name="redirect_url" type="string">
+  Complete redirect URL with query parameters (alternative to separate code/state)
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Status of callback processing ("ok" or "error")
+</ResponseField>
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### Error Responses
+
+#### Invalid State
+
+```json
+{
+  "status": "error",
+  "error": "invalid state"
+}
+```
+
+#### Unknown/Expired State
+
+```json
+{
+  "status": "error",
+  "error": "unknown or expired state"
+}
+```
+
+#### Already Completed
+
+```json
+{
+  "status": "error",
+  "error": "oauth flow is not pending"
+}
+```
+
+#### Provider Mismatch
+
+```json
+{
+  "status": "error",
+  "error": "provider does not match state"
+}
+```
+
+## Get Authentication Status
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/get-auth-status`
+</ParamField>
+
+Check the status of OAuth authentication flows. Used for polling after submitting callback.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  "http://localhost:8317/v0/management/get-auth-status?provider=anthropic"
+```
+
+### Query Parameters
+
+<ParamField query="provider" type="string">
+  Filter by provider name
+</ParamField>
+
+<ParamField query="state" type="string">
+  Check specific OAuth session by state
+</ParamField>
+
+### Response
+
+<ResponseField name="sessions" type="object[]">
+  List of active OAuth sessions
+  
+  <ResponseField name="provider" type="string">
+    Provider name
+  </ResponseField>
+  
+  <ResponseField name="state" type="string">
+    OAuth state parameter
+  </ResponseField>
+  
+  <ResponseField name="status" type="string">
+    Session status (empty = pending, otherwise error message or "completed")
+  </ResponseField>
+  
+  <ResponseField name="created_at" type="number">
+    Unix timestamp when session was created
+  </ResponseField>
+  
+  <ResponseField name="expires_at" type="number">
+    Unix timestamp when session expires
+  </ResponseField>
+</ResponseField>
+
+```json
+{
+  "sessions": [
+    {
+      "provider": "anthropic",
+      "state": "abc123def456",
+      "status": "",
+      "created_at": 1710172200,
+      "expires_at": 1710172800
+    }
+  ]
+}
+```
+
+## OAuth Session Management
+
+### Session Lifecycle
+
+1. **Created** - Session registered when auth URL requested
+2. **Pending** - Waiting for callback (status = "")
+3. **Completed** - Callback received and processed (session deleted)
+4. **Error** - Callback failed (status contains error message)
+5. **Expired** - Session TTL exceeded (automatically cleaned up)
+
+### Session TTL
+
+- **Default TTL**: 10 minutes from creation
+- **Automatic cleanup**: Expired sessions purged periodically
+- **State validation**: Must be alphanumeric with `-`, `_`, `.` only
+- **Max length**: 128 characters
+
+### State Security
+
+The `state` parameter:
+- Must be provided in both auth URL request and callback
+- Used for CSRF protection
+- Cannot contain path separators (`/`, `\`)
+- Cannot contain `..` (path traversal)
+- Must match pattern: `[a-zA-Z0-9._-]+`
+
+## Complete OAuth Flow Example
+
+### Step 1: Request Authorization URL
+
+```bash
+# Get authorization URL
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/anthropic-auth-url
+
+# Response
+{
+  "auth_url": "https://console.anthropic.com/oauth/authorize?...",
+  "state": "abc123def456",
+  "expires_at": 1710172800
+}
+```
+
+### Step 2: User Completes OAuth Flow
+
+User opens `auth_url` in browser and authorizes the application.
+
+Provider redirects to callback URL:
+```
+https://your-app.com/callback?code=oauth_code&state=abc123def456
+```
+
+### Step 3: Submit Callback
+
+```bash
+curl -X POST \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "anthropic",
+    "state": "abc123def456",
+    "code": "oauth_code"
+  }' \
+  http://localhost:8317/v0/management/oauth-callback
+
+# Response
+{"status": "ok"}
+```
+
+### Step 4: Poll for Completion
+
+```bash
+# Check authentication status
+curl -H "X-Management-Key: YOUR_SECRET" \
+  "http://localhost:8317/v0/management/get-auth-status?state=abc123def456"
+
+# Pending response
+{
+  "sessions": [
+    {
+      "provider": "anthropic",
+      "state": "abc123def456",
+      "status": "",
+      "created_at": 1710172200,
+      "expires_at": 1710172800
+    }
+  ]
+}
+
+# Completed (session removed)
+{
+  "sessions": []
+}
+```
+
+## OAuth Callback File Format
+
+When callback is received, the management API writes a file:
+
+**Location**: `{auth-dir}/.oauth-{provider}-{state}.oauth`
+
+**Format**:
+```json
+{
+  "code": "oauth_authorization_code",
+  "state": "abc123def456",
+  "error": ""
+}
+```
+
+The authentication system monitors this directory and processes new OAuth files automatically.
+
+## Alternative: Submit via Redirect URL
+
+You can submit the entire redirect URL instead of parsing code/state:
+
+```bash
+curl -X POST \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "anthropic",
+    "redirect_url": "https://your-app.com/callback?code=oauth_code&state=abc123def456"
+  }' \
+  http://localhost:8317/v0/management/oauth-callback
+```
+
+The API will parse the query parameters automatically.
+
+## Error Handling
+
+### Provider Errors
+
+If the provider returns an error:
+
+```bash
+curl -X POST \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "anthropic",
+    "state": "abc123def456",
+    "error": "access_denied"
+  }' \
+  http://localhost:8317/v0/management/oauth-callback
+```
+
+The error is recorded in the OAuth session and written to the callback file.
+
+### Session Expiration
+
+If the state has expired (>10 minutes since auth URL request):
+
+```json
+{
+  "status": "error",
+  "error": "unknown or expired state"
+}
+```
+
+The client must request a new authorization URL and restart the flow.
+
+## Next Steps
+
+- [Configuration Endpoints](/api/management/config) - Manage API keys and providers
+- [Quota Endpoints](/api/management/quota) - Configure quota behavior
+- [Log Endpoints](/api/management/logs) - Monitor authentication events

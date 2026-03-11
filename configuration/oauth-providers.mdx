@@ -1,0 +1,336 @@
+---
+title: OAuth Providers
+description: Configure OAuth-based authentication for Gemini, Claude, Codex, Vertex, and other AI providers
+---
+
+## Overview
+
+The CLI Proxy API supports OAuth authentication for various AI providers. OAuth credentials are stored in the `auth-dir` directory and managed through the Management API or CLI.
+
+## Supported OAuth Providers
+
+The following providers support OAuth authentication:
+
+- **Gemini CLI** (`gemini-cli`) - Google Gemini via CLI authentication
+- **Vertex AI** (`vertex`) - Google Vertex AI with service accounts
+- **AI Studio** (`aistudio`) - Google AI Studio
+- **Antigravity** (`antigravity`) - Gemini 3.0 experimental access
+- **Claude** (`claude`) - Anthropic Claude via OAuth
+- **Codex** (`codex`) - OpenAI Codex
+- **Qwen** (`qwen`) - Alibaba Qwen models
+- **iFlow** (`iflow`) - iFlow AI
+- **Kimi** (`kimi`) - Moonshot AI Kimi
+
+## OAuth Model Aliases
+
+Global OAuth model name aliases allow you to rename model IDs for both model listing and request routing.
+
+<ParamField path="oauth-model-alias" type="object">
+  Per-channel model name aliases. Each channel can have multiple aliases defined.
+  
+  <Note>
+    Aliases do **not** apply to API key-based providers (`gemini-api-key`, `codex-api-key`, `claude-api-key`, `openai-compatibility`, `vertex-api-key`, `ampcode`). Those providers have their own per-credential alias systems.
+  </Note>
+</ParamField>
+
+### Alias Configuration
+
+Each alias entry has three properties:
+
+<ParamField path="oauth-model-alias.<channel>[].name" type="string" required>
+  Original model name under this channel.
+</ParamField>
+
+<ParamField path="oauth-model-alias.<channel>[].alias" type="string" required>
+  Client-visible alias for the model.
+</ParamField>
+
+<ParamField path="oauth-model-alias.<channel>[].fork" type="boolean" default="false">
+  When true, keep the original model name **and** add the alias as an extra model. When false, replace the original name with the alias.
+</ParamField>
+
+### OAuth Alias Example
+
+```yaml
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+      fork: false  # Replaces "gemini-2.5-pro" with "g2.5p"
+    - name: "gemini-2.5-flash"
+      alias: "flash"
+      fork: true   # Keeps both "gemini-2.5-flash" and "flash"
+  
+  vertex:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+  
+  aistudio:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+  
+  antigravity:
+    - name: "gemini-3-pro-high"
+      alias: "gemini-3-pro-preview"
+  
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "cs4.5"
+    - name: "claude-opus-4-5-20251101"
+      alias: "opus-latest"
+  
+  codex:
+    - name: "gpt-5"
+      alias: "g5"
+  
+  qwen:
+    - name: "qwen3-coder-plus"
+      alias: "qwen-plus"
+  
+  iflow:
+    - name: "glm-4.7"
+      alias: "glm-god"
+  
+  kimi:
+    - name: "kimi-k2.5"
+      alias: "k2.5"
+```
+
+<Tip>
+  **When to use `fork: true`:**
+  
+  Use `fork: true` when you want both the original model name and the alias available to clients. This is useful for:
+  - Gradual migration from old to new names
+  - Providing both short and full model names
+  - Supporting multiple naming conventions simultaneously
+</Tip>
+
+## OAuth Excluded Models
+
+Exclude specific models from OAuth providers using patterns.
+
+<ParamField path="oauth-excluded-models" type="object">
+  Per-provider model exclusion lists. Each provider can have multiple exclusion patterns.
+</ParamField>
+
+### Exclusion Patterns
+
+Supports four pattern types:
+
+1. **Exact match**: `"gemini-2.5-pro"` - Excludes only this exact model
+2. **Prefix wildcard**: `"gemini-2.5-*"` - Excludes `gemini-2.5-flash`, `gemini-2.5-pro`, etc.
+3. **Suffix wildcard**: `"*-preview"` - Excludes `gemini-3-pro-preview`, `claude-opus-preview`, etc.
+4. **Substring wildcard**: `"*flash*"` - Excludes `gemini-2.5-flash-lite`, `flash-pro`, etc.
+
+### Exclusion Example
+
+```yaml
+oauth-excluded-models:
+  gemini-cli:
+    - "gemini-2.5-pro"     # Exclude specific model
+    - "gemini-2.5-*"       # Exclude all 2.5 models
+    - "*-preview"          # Exclude all preview models
+    - "*flash*"            # Exclude all flash variants
+  
+  vertex:
+    - "gemini-3-pro-preview"
+  
+  aistudio:
+    - "gemini-3-pro-preview"
+  
+  antigravity:
+    - "gemini-3-pro-preview"
+  
+  claude:
+    - "claude-3-5-haiku-20241022"
+    - "*-thinking"         # Exclude thinking models
+  
+  codex:
+    - "gpt-5-codex-mini"
+    - "*-mini"             # Exclude all mini models
+  
+  qwen:
+    - "vision-model"
+  
+  iflow:
+    - "tstars2.0"
+  
+  kimi:
+    - "kimi-k2-thinking"
+    - "*-thinking"         # Exclude all thinking variants
+```
+
+<Note>
+  Wildcard patterns are case-insensitive and match against lowercase model names.
+</Note>
+
+## OAuth Setup
+
+### 1. Configure Authentication Directory
+
+```yaml
+auth-dir: "~/.cli-proxy-api"
+```
+
+### 2. Enable Management API
+
+```yaml
+remote-management:
+  allow-remote: false
+  secret-key: "your-management-password"
+```
+
+### 3. Initiate OAuth Flow
+
+Use the Management API to start OAuth authentication:
+
+```bash
+curl -X POST https://localhost:8317/v0/management/oauth/gemini-cli \
+  -H "X-Management-Key: your-management-password"
+```
+
+Response:
+```json
+{
+  "auth_url": "https://accounts.google.com/o/oauth2/auth?...",
+  "state": "random-state-token"
+}
+```
+
+### 4. Complete Authorization
+
+Open the `auth_url` in a browser, authorize the application, and copy the callback URL.
+
+### 5. Exchange Code for Token
+
+```bash
+curl -X POST https://localhost:8317/v0/management/oauth/gemini-cli/callback \
+  -H "X-Management-Key: your-management-password" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "authorization-code-from-callback",
+    "state": "random-state-token"
+  }'
+```
+
+### 6. Verify Session
+
+```bash
+curl https://localhost:8317/v0/management/sessions \
+  -H "X-Management-Key: your-management-password"
+```
+
+## Complete OAuth Configuration Example
+
+```yaml
+# Authentication Directory
+auth-dir: "~/.cli-proxy-api"
+
+# Management API (required for OAuth)
+remote-management:
+  allow-remote: false
+  secret-key: "management-password-here"
+
+# OAuth Model Aliases
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+    - name: "gemini-2.5-flash"
+      alias: "flash"
+      fork: true
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "sonnet-latest"
+  codex:
+    - name: "gpt-5"
+      alias: "gpt-latest"
+
+# OAuth Excluded Models
+oauth-excluded-models:
+  gemini-cli:
+    - "*-preview"          # Exclude preview models
+    - "gemini-1.*"         # Exclude v1 models
+  claude:
+    - "claude-3-*"         # Only use Claude 4+ models
+  codex:
+    - "*-mini"             # Exclude mini variants
+```
+
+## Provider-Specific Notes
+
+### Gemini CLI
+
+```yaml
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"
+      alias: "pro"
+```
+
+Requires Google Cloud authentication via `gcloud` CLI or service account.
+
+### Claude OAuth
+
+```yaml
+oauth-model-alias:
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "sonnet"
+```
+
+Requires Anthropic account with OAuth enabled.
+
+### Vertex AI
+
+```yaml
+oauth-model-alias:
+  vertex:
+    - name: "gemini-2.5-pro"
+      alias: "vertex-pro"
+```
+
+Requires Google Cloud service account with Vertex AI permissions.
+
+## Best Practices
+
+<Tip>
+  **Alias Naming:**
+  - Use short, memorable aliases (e.g., `"g2.5p"` instead of `"gemini-2.5-pro"`)
+  - Maintain consistency across providers
+  - Document custom aliases for your team
+</Tip>
+
+<Warning>
+  **Security:**
+  - Keep `auth-dir` permissions restricted (0700)
+  - Rotate OAuth tokens periodically
+  - Monitor OAuth session access logs
+  - Use `allow-remote: false` for Management API
+</Warning>
+
+<Note>
+  **Exclusion vs Aliases:**
+  
+  Exclusions are applied **before** aliases. If you exclude a model, you cannot create an alias for it.
+</Note>
+
+## Troubleshooting
+
+### OAuth Flow Fails
+
+1. Check Management API is enabled (`secret-key` is set)
+2. Verify `auth-dir` exists and is writable
+3. Ensure OAuth provider supports your account type
+
+### Models Not Appearing
+
+1. Check `oauth-excluded-models` for matching patterns
+2. Verify OAuth session is active (`GET /v0/management/sessions`)
+3. Ensure provider supports the requested models
+
+### Aliases Not Working
+
+1. Verify channel name matches provider exactly (case-sensitive)
+2. Check for typos in `name` field (must match upstream model name)
+3. Ensure `fork: false` if you want to replace (not add to) model name

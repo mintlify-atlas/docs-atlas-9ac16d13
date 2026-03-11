@@ -1,0 +1,211 @@
+---
+title: Management API Overview
+description: Secure API for managing CLI Proxy API server configuration and operations
+---
+
+The Management API provides secure endpoints for configuring and managing the CLI Proxy API server at runtime. All endpoints require authentication and can be restricted to localhost access.
+
+## Base URL
+
+```
+/v0/management
+```
+
+## Authentication
+
+All Management API requests require authentication using one of these methods:
+
+### Authorization Header
+
+```bash
+curl -H "Authorization: Bearer YOUR_SECRET_KEY" \
+  http://localhost:8317/v0/management/config
+```
+
+### Custom Header
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET_KEY" \
+  http://localhost:8317/v0/management/config
+```
+
+## Security Configuration
+
+Configure management access in `config.yaml`:
+
+```yaml
+remote-management:
+  # Allow remote (non-localhost) access
+  allow-remote: false
+  
+  # Management secret key (hashed on startup if plaintext)
+  secret-key: "your-secret-key"
+  
+  # Disable the bundled management control panel
+  disable-control-panel: false
+```
+
+<Note>
+  **Security Best Practices:**
+  - Keep `allow-remote: false` unless remote management is required
+  - Use a strong, randomly generated `secret-key`
+  - Even localhost requests require the management key
+  - Empty `secret-key` disables all management routes (returns 404)
+</Note>
+
+## Environment Variable Override
+
+Set `MANAGEMENT_PASSWORD` environment variable to:
+- Enable remote management automatically
+- Override the config file secret key
+
+```bash
+export MANAGEMENT_PASSWORD="your-runtime-secret"
+./cli-proxy-api
+```
+
+## Rate Limiting
+
+Remote clients are subject to rate limiting:
+- **Max failures**: 5 failed authentication attempts
+- **Ban duration**: 30 minutes
+- **Automatic cleanup**: Stale IPs purged after 2 hours idle time
+
+## Response Headers
+
+All management responses include build information:
+
+```
+X-CPA-VERSION: v6.0.0
+X-CPA-COMMIT: abc123def
+X-CPA-BUILD-DATE: 2026-03-11
+```
+
+## Management Endpoints
+
+### Configuration
+
+- `GET /v0/management/config` - Get full configuration
+- `GET /v0/management/config.yaml` - Get raw YAML config
+- `PUT /v0/management/config.yaml` - Update entire config
+- `GET /v0/management/latest-version` - Check for updates
+
+See [Configuration Endpoints](/api/management/config) for details.
+
+### OAuth Sessions
+
+- `POST /v0/management/oauth-callback` - Handle OAuth callback
+- `GET /v0/management/get-auth-status` - Get authentication status
+- `GET /v0/management/{provider}-auth-url` - Get OAuth authorization URL
+
+See [OAuth Endpoints](/api/management/oauth) for details.
+
+### Quota Management
+
+- `GET /v0/management/quota-exceeded/switch-project` - Get project switching setting
+- `PUT /v0/management/quota-exceeded/switch-project` - Enable/disable project switching
+- `GET /v0/management/quota-exceeded/switch-preview-model` - Get preview model switching
+- `PUT /v0/management/quota-exceeded/switch-preview-model` - Enable/disable preview switching
+
+See [Quota Endpoints](/api/management/quota) for details.
+
+### Logs
+
+- `GET /v0/management/logs` - Get log entries
+- `DELETE /v0/management/logs` - Clear all logs
+- `GET /v0/management/request-error-logs` - List error log files
+- `GET /v0/management/request-log-by-id/:id` - Download request log by ID
+
+See [Log Endpoints](/api/management/logs) for details.
+
+### Usage Statistics
+
+- `GET /v0/management/usage` - Get usage statistics
+- `GET /v0/management/usage/export` - Export usage data
+- `POST /v0/management/usage/import` - Import usage data
+
+### Authentication Files
+
+- `GET /v0/management/auth-files` - List authentication files
+- `POST /v0/management/auth-files` - Upload authentication file
+- `DELETE /v0/management/auth-files` - Delete authentication file
+- `GET /v0/management/auth-files/models` - Get available models
+
+### API Keys
+
+- `GET /v0/management/api-keys` - Get API keys
+- `PUT /v0/management/api-keys` - Replace API keys
+- `PATCH /v0/management/api-keys` - Update specific key
+- `DELETE /v0/management/api-keys` - Delete API key
+
+### Provider Keys
+
+- Gemini: `/v0/management/gemini-api-key`
+- Claude: `/v0/management/claude-api-key`
+- Codex: `/v0/management/codex-api-key`
+- OpenAI Compatible: `/v0/management/openai-compatibility`
+- Vertex: `/v0/management/vertex-api-key`
+
+## Error Responses
+
+### 401 Unauthorized
+
+```json
+{
+  "error": "missing management key"
+}
+```
+
+```json
+{
+  "error": "invalid management key"
+}
+```
+
+### 403 Forbidden
+
+```json
+{
+  "error": "remote management disabled"
+}
+```
+
+```json
+{
+  "error": "IP banned due to too many failed attempts. Try again in 29m 45s"
+}
+```
+
+### 404 Not Found
+
+Returned when management API is completely disabled (empty `secret-key`).
+
+## Example: Complete Setup
+
+```bash
+# 1. Configure management in config.yaml
+remote-management:
+  allow-remote: false
+  secret-key: "my-secure-key-123"
+
+# 2. Start server
+./cli-proxy-api -c config.yaml
+
+# 3. Make management request
+curl -H "X-Management-Key: my-secure-key-123" \
+  http://localhost:8317/v0/management/config | jq
+
+# 4. Update configuration
+curl -X PUT \
+  -H "X-Management-Key: my-secure-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/debug
+```
+
+## Next Steps
+
+- [Configuration Endpoints](/api/management/config) - Manage server configuration
+- [OAuth Endpoints](/api/management/oauth) - Handle OAuth authentication flows
+- [Quota Endpoints](/api/management/quota) - Configure quota behavior
+- [Log Endpoints](/api/management/logs) - Access and manage logs

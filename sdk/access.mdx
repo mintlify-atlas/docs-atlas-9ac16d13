@@ -1,0 +1,597 @@
+---
+title: 'Access Providers'
+description: 'Request authentication with custom access providers for API key validation and authorization'
+---
+
+## Overview
+
+Access providers handle request authentication before proxying to upstream AI services. They validate credentials from incoming HTTP requests and determine whether to allow or reject access.
+
+The SDK provides:
+- A built-in API key provider for inline configuration
+- A registry for custom providers
+- A manager that evaluates providers in order
+- Full control over authentication logic
+
+## Access Provider Interface
+
+Implement the `Provider` interface to create custom authentication:
+
+```go sdk/access/registry.go
+package access
+
+import (
+    "context"
+    "net/http"
+)
+
+// Provider validates credentials for incoming requests.
+type Provider interface {
+    // Identifier returns the unique provider identifier
+    Identifier() string
+    
+    // Authenticate validates the request and returns the result
+    Authenticate(ctx context.Context, r *http.Request) (*Result, *AuthError)
+}
+
+// Result conveys authentication outcome.
+type Result struct {
+    Provider  string            // Provider identifier
+    Principal string            // User/credential identifier
+    Metadata  map[string]string // Additional context
+}
+```
+
+### Authentication Errors
+
+Return `AuthError` to communicate authentication failures:
+
+```go sdk/access/errors.go
+type AuthError struct {
+    Code       AuthErrorCode
+    Message    string
+    StatusCode int
+    Cause      error
+}
+
+const (
+    AuthErrorCodeNoCredentials     AuthErrorCode = "no_credentials"
+    AuthErrorCodeInvalidCredential AuthErrorCode = "invalid_credential"
+    AuthErrorCodeNotHandled        AuthErrorCode = "not_handled"
+    AuthErrorCodeInternal          AuthErrorCode = "internal_error"
+)
+
+// Helper functions
+func NewNoCredentialsError() *AuthError
+func NewInvalidCredentialError() *AuthError
+func NewNotHandledError() *AuthError
+func NewInternalAuthError(message string, cause error) *AuthError
+```
+
+**Error semantics:**
+
+- `AuthErrorCodeNotHandled` - Provider doesn't apply to this request (continues to next provider)
+- `AuthErrorCodeNoCredentials` - Request is missing credentials (continues to next provider)
+- `AuthErrorCodeInvalidCredential` - Credentials are present but invalid (authentication fails)
+- `AuthErrorCodeInternal` - Server error during authentication (authentication fails)
+
+## Creating Custom Providers
+
+### Basic Example
+
+Here's a custom provider that validates API keys from a database:
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "net/http"
+    "strings"
+    
+    sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+)
+
+type DatabaseProvider struct {
+    db *sql.DB
+}
+
+func (p *DatabaseProvider) Identifier() string {
+    return "database-api-key"
+}
+
+func (p *DatabaseProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
+    // Extract Bearer token from Authorization header
+    authHeader := r.Header.Get("Authorization")
+    if authHeader == "" {
+        return nil, sdkaccess.NewNoCredentialsError()
+    }
+    
+    apiKey := extractBearerToken(authHeader)
+    if apiKey == "" {
+        return nil, sdkaccess.NewNoCredentialsError()
+    }
+    
+    // Query database to validate the key
+    var userID string
+    var active bool
+    err := p.db.QueryRowContext(ctx, 
+        "SELECT user_id, active FROM api_keys WHERE key = ?", apiKey,
+    ).Scan(&userID, &active)
+    
+    if err == sql.ErrNoRows {
+        return nil, sdkaccess.NewInvalidCredentialError()
+    }
+    if err != nil {
+        return nil, sdkaccess.NewInternalAuthError("database query failed", err)
+    }
+    if !active {
+        return nil, sdkaccess.NewInvalidCredentialError()
+    }
+    
+    // Authentication successful
+    return &sdkaccess.Result{
+        Provider:  "database-api-key",
+        Principal: userID,
+        Metadata: map[string]string{
+            "source": "database",
+            "key_id": apiKey[:8] + "...",
+        },
+    }, nil
+}
+
+func extractBearerToken(header string) string {
+    parts := strings.SplitN(header, " ", 2)
+    if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+        return ""
+    }
+    return strings.TrimSpace(parts[1])
+}
+```
+
+### Multi-Header Provider
+
+Support multiple authentication methods:
+
+```go
+type FlexibleProvider struct {
+    validKeys map[string]string // key -> user_id
+}
+
+func (p *FlexibleProvider) Identifier() string {
+    return "flexible-auth"
+}
+
+func (p *FlexibleProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
+    // Check multiple possible credential sources
+    candidates := []struct {
+        value  string
+        source string
+    }{
+        {extractBearerToken(r.Header.Get("Authorization")), "authorization"},
+        {r.Header.Get("X-API-Key"), "x-api-key"},
+        {r.Header.Get("X-Goog-Api-Key"), "x-goog-api-key"},
+        {r.URL.Query().Get("key"), "query-key"},
+    }
+    
+    for _, candidate := range candidates {
+        if candidate.value == "" {
+            continue
+        }
+        
+        // Validate against known keys
+        if userID, ok := p.validKeys[candidate.value]; ok {
+            return &sdkaccess.Result{
+                Provider:  p.Identifier(),
+                Principal: userID,
+                Metadata: map[string]string{
+                    "source": candidate.source,
+                },
+            }, nil
+        }
+    }
+    
+    // No valid credentials found
+    return nil, sdkaccess.NewInvalidCredentialError()
+}
+```
+
+### JWT Provider
+
+Validate JSON Web Tokens:
+
+```go
+import (
+    "github.com/golang-jwt/jwt/v5"
+)
+
+type JWTProvider struct {
+    secret []byte
+}
+
+func (p *JWTProvider) Identifier() string {
+    return "jwt-auth"
+}
+
+func (p *JWTProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
+    authHeader := r.Header.Get("Authorization")
+    if authHeader == "" {
+        return nil, sdkaccess.NewNotHandledError()
+    }
+    
+    tokenString := extractBearerToken(authHeader)
+    if tokenString == "" {
+        return nil, sdkaccess.NewNoCredentialsError()
+    }
+    
+    // Parse and validate JWT
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        return p.secret, nil
+    })
+    
+    if err != nil {
+        return nil, sdkaccess.NewInvalidCredentialError()
+    }
+    
+    if !token.Valid {
+        return nil, sdkaccess.NewInvalidCredentialError()
+    }
+    
+    // Extract claims
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok {
+        return nil, sdkaccess.NewInternalAuthError("invalid claims format", nil)
+    }
+    
+    userID, _ := claims["sub"].(string)
+    
+    return &sdkaccess.Result{
+        Provider:  p.Identifier(),
+        Principal: userID,
+        Metadata: map[string]string{
+            "source": "jwt",
+        },
+    }, nil
+}
+```
+
+## Provider Registration
+
+Register providers globally for use by the access manager:
+
+```go sdk/access/registry.go
+// RegisterProvider registers a pre-built provider instance for a given type identifier.
+func RegisterProvider(typ string, provider Provider)
+
+// UnregisterProvider removes a provider by type identifier.
+func UnregisterProvider(typ string)
+
+// RegisteredProviders returns the global provider instances in registration order.
+func RegisteredProviders() []Provider
+```
+
+### Registration Example
+
+```go
+package main
+
+import (
+    sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+)
+
+func init() {
+    // Register custom providers at startup
+    sdkaccess.RegisterProvider("database", &DatabaseProvider{
+        db: initDatabase(),
+    })
+    
+    sdkaccess.RegisterProvider("jwt", &JWTProvider{
+        secret: []byte("your-secret-key"),
+    })
+}
+```
+
+## Access Manager
+
+The `Manager` coordinates multiple providers and evaluates them in order:
+
+```go sdk/access/manager.go
+package access
+
+import (
+    "context"
+    "net/http"
+)
+
+// Manager coordinates authentication providers.
+type Manager struct {
+    // ... internal fields
+}
+
+// NewManager constructs an empty manager.
+func NewManager() *Manager
+
+// SetProviders replaces the active provider list.
+func (m *Manager) SetProviders(providers []Provider)
+
+// Providers returns a snapshot of the active providers.
+func (m *Manager) Providers() []Provider
+
+// Authenticate evaluates providers until one succeeds.
+func (m *Manager) Authenticate(ctx context.Context, r *http.Request) (*Result, *AuthError)
+```
+
+### Manager Behavior
+
+The manager evaluates providers **in order** until:
+
+1. A provider returns a successful `Result` → authentication succeeds
+2. A provider returns an error other than `NotHandled` or `NoCredentials` → authentication fails
+3. All providers have been tried → authentication fails with appropriate error
+
+**Error priority:**
+1. `InvalidCredential` (if any provider found invalid credentials)
+2. `NoCredentials` (if no credentials were found)
+
+### Integration Example
+
+```go
+package main
+
+import (
+    "context"
+    
+    sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+func main() {
+    cfg, _ := config.LoadConfig("config.yaml")
+    
+    // Register custom providers
+    sdkaccess.RegisterProvider("database", &DatabaseProvider{
+        db: initDatabase(),
+    })
+    sdkaccess.RegisterProvider("jwt", &JWTProvider{
+        secret: []byte("your-secret"),
+    })
+    
+    // Create access manager with all registered providers
+    accessManager := sdkaccess.NewManager()
+    accessManager.SetProviders(sdkaccess.RegisteredProviders())
+    
+    // Build service with access manager
+    svc, _ := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        WithRequestAccessManager(accessManager).
+        Build()
+    
+    svc.Run(context.Background())
+}
+```
+
+## Built-in Provider
+
+The SDK includes a built-in provider for inline API keys:
+
+```go sdk/access/types.go
+const (
+    // AccessProviderTypeConfigAPIKey is the built-in provider validating inline API keys.
+    AccessProviderTypeConfigAPIKey = "config-api-key"
+    
+    // DefaultAccessProviderName is applied when no provider name is supplied.
+    DefaultAccessProviderName = "config-inline"
+)
+```
+
+This provider validates credentials from:
+- `Authorization: Bearer <key>` header
+- `X-Goog-Api-Key` header (Google format)
+- `X-Api-Key` header (Anthropic format)
+- `?key=<key>` query parameter
+- `?auth_token=<token>` query parameter
+
+### Configuration
+
+```yaml config.yaml
+# Inline API keys validated by the built-in provider
+api_keys:
+  - "sk-1234567890abcdef"
+  - "sk-fedcba0987654321"
+```
+
+## Provider Configuration
+
+Define custom providers in configuration:
+
+```go sdk/access/types.go
+// AccessConfig groups request authentication providers.
+type AccessConfig struct {
+    // Providers lists configured authentication providers.
+    Providers []AccessProvider `yaml:"providers,omitempty" json:"providers,omitempty"`
+}
+
+// AccessProvider describes a request authentication provider entry.
+type AccessProvider struct {
+    // Name is the instance identifier for the provider.
+    Name string `yaml:"name" json:"name"`
+    
+    // Type selects the provider implementation registered via the SDK.
+    Type string `yaml:"type" json:"type"`
+    
+    // SDK optionally names a third-party SDK module providing this provider.
+    SDK string `yaml:"sdk,omitempty" json:"sdk,omitempty"`
+    
+    // APIKeys lists inline keys for providers that require them.
+    APIKeys []string `yaml:"api-keys,omitempty" json:"api-keys,omitempty"`
+    
+    // Config passes provider-specific options to the implementation.
+    Config map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+}
+```
+
+### Example Configuration
+
+```yaml config.yaml
+access:
+  providers:
+    - name: primary-auth
+      type: database
+      config:
+        connection_string: "postgresql://localhost/auth"
+    
+    - name: jwt-auth
+      type: jwt
+      config:
+        secret_key: "your-secret-key"
+        issuer: "your-service"
+    
+    - name: fallback
+      type: config-api-key
+      api_keys:
+        - "sk-fallback-key"
+```
+
+## Testing Providers
+
+Test authentication logic without a full server:
+
+```go
+package main
+
+import (
+    "context"
+    "net/http"
+    "net/http/httptest"
+    "testing"
+    
+    sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
+)
+
+func TestDatabaseProvider(t *testing.T) {
+    provider := &DatabaseProvider{
+        db: setupTestDB(),
+    }
+    
+    // Test valid credentials
+    req := httptest.NewRequest("GET", "/", nil)
+    req.Header.Set("Authorization", "Bearer valid-key")
+    
+    result, authErr := provider.Authenticate(context.Background(), req)
+    if authErr != nil {
+        t.Fatalf("expected success, got error: %v", authErr)
+    }
+    if result.Principal != "user123" {
+        t.Errorf("expected user123, got %s", result.Principal)
+    }
+    
+    // Test invalid credentials
+    req = httptest.NewRequest("GET", "/", nil)
+    req.Header.Set("Authorization", "Bearer invalid-key")
+    
+    _, authErr = provider.Authenticate(context.Background(), req)
+    if authErr == nil {
+        t.Fatal("expected error for invalid key")
+    }
+    if authErr.Code != sdkaccess.AuthErrorCodeInvalidCredential {
+        t.Errorf("expected invalid_credential, got %s", authErr.Code)
+    }
+}
+
+func TestAccessManager(t *testing.T) {
+    manager := sdkaccess.NewManager()
+    
+    // Register test providers
+    provider1 := &MockProvider{name: "provider1", shouldHandle: false}
+    provider2 := &MockProvider{name: "provider2", shouldHandle: true}
+    
+    manager.SetProviders([]sdkaccess.Provider{provider1, provider2})
+    
+    req := httptest.NewRequest("GET", "/", nil)
+    req.Header.Set("Authorization", "Bearer test-key")
+    
+    result, authErr := manager.Authenticate(context.Background(), req)
+    if authErr != nil {
+        t.Fatalf("authentication failed: %v", authErr)
+    }
+    if result.Provider != "provider2" {
+        t.Errorf("expected provider2, got %s", result.Provider)
+    }
+}
+```
+
+## Best Practices
+
+### 1. Return NotHandled for Non-Applicable Requests
+
+```go
+func (p *JWTProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
+    authHeader := r.Header.Get("Authorization")
+    if authHeader == "" {
+        // Let other providers handle this request
+        return nil, sdkaccess.NewNotHandledError()
+    }
+    // ... continue with JWT validation
+}
+```
+
+### 2. Include Useful Metadata
+
+```go
+return &sdkaccess.Result{
+    Provider:  p.Identifier(),
+    Principal: userID,
+    Metadata: map[string]string{
+        "source":      "database",
+        "role":        userRole,
+        "tenant_id":   tenantID,
+        "auth_time":   time.Now().Format(time.RFC3339),
+    },
+}, nil
+```
+
+### 3. Handle Context Cancellation
+
+```go
+func (p *DatabaseProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
+    // Use context for database queries
+    var userID string
+    err := p.db.QueryRowContext(ctx, "SELECT user_id FROM api_keys WHERE key = ?", apiKey).Scan(&userID)
+    
+    if ctx.Err() != nil {
+        return nil, sdkaccess.NewInternalAuthError("context cancelled", ctx.Err())
+    }
+    // ...
+}
+```
+
+### 4. Order Providers by Specificity
+
+```go
+// More specific providers first
+manager.SetProviders([]sdkaccess.Provider{
+    jwtProvider,        // Most specific - validates JWTs
+    databaseProvider,   // Specific - queries database
+    configProvider,     // Fallback - checks config
+})
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="File Watching" icon="eye" href="/sdk/watcher">
+    Monitor config and auth file changes
+  </Card>
+  <Card title="Service Builder" icon="hammer" href="/sdk/embedding">
+    Configure and build the proxy service
+  </Card>
+  <Card title="Advanced Features" icon="gears" href="/sdk/advanced">
+    Custom executors and translators
+  </Card>
+  <Card title="Examples" icon="code" href="/sdk/examples/custom-provider">
+    Complete working examples
+  </Card>
+</CardGroup>

@@ -1,0 +1,635 @@
+---
+title: 'Advanced SDK Features'
+description: 'Custom executors, translators, and provider integration'
+---
+
+## Custom Executors
+
+Executors handle the actual communication with AI service providers. You can create custom executors to integrate new providers or modify existing behavior.
+
+### Executor Interface
+
+To create a custom executor, implement the `Executor` interface:
+
+```go
+package executor
+
+type Executor interface {
+    // Identifier returns the unique provider key
+    Identifier() string
+    
+    // Execute handles non-streaming requests
+    Execute(ctx context.Context, auth *coreauth.Auth, req Request, opts Options) (Response, error)
+    
+    // ExecuteStream handles streaming requests
+    ExecuteStream(ctx context.Context, auth *coreauth.Auth, req Request, opts Options) (*StreamResult, error)
+    
+    // PrepareRequest injects credentials into HTTP requests
+    PrepareRequest(req *http.Request, auth *coreauth.Auth) error
+    
+    // HttpRequest executes arbitrary HTTP requests with auth
+    HttpRequest(ctx context.Context, auth *coreauth.Auth, req *http.Request) (*http.Response, error)
+    
+    // Refresh refreshes authentication credentials
+    Refresh(ctx context.Context, auth *coreauth.Auth) (*coreauth.Auth, error)
+    
+    // CountTokens estimates token usage (optional)
+    CountTokens(ctx context.Context, auth *coreauth.Auth, req Request, opts Options) (Response, error)
+}
+```
+
+### Executor Types
+
+The SDK defines key types for request/response handling:
+
+```go
+// Request encapsulates the translated payload
+type Request struct {
+    Model    string              // Upstream model identifier
+    Payload  []byte              // Provider-specific JSON payload
+    Format   sdktranslator.Format // Payload schema
+    Metadata map[string]any      // Execution hints
+}
+
+// Options controls execution behavior
+type Options struct {
+    Stream          bool              // Enable streaming
+    Alt             string            // Alternate format hint
+    Headers         http.Header       // Request headers
+    Query           url.Values        // Query parameters
+    OriginalRequest []byte            // Inbound request bytes
+    SourceFormat    sdktranslator.Format // Inbound schema
+    Metadata        map[string]any    // Execution hints
+}
+
+// Response wraps provider response
+type Response struct {
+    Payload  []byte         // Provider response
+    Metadata map[string]any // Structured data
+    Headers  http.Header    // Response headers
+}
+
+// StreamResult wraps streaming response
+type StreamResult struct {
+    Headers http.Header          // HTTP headers
+    Chunks  <-chan StreamChunk   // Chunk channel
+}
+
+// StreamChunk represents a single streaming payload
+type StreamChunk struct {
+    Payload []byte // Raw chunk data
+    Err     error  // Terminal error
+}
+```
+
+### Complete Executor Example
+
+Here's a complete custom executor implementation:
+
+```go
+package main
+
+import (
+    "bytes"
+    "context"
+    "errors"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    
+    coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+    clipexec "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+)
+
+const providerKey = "myprovider"
+
+// MyExecutor implements a custom AI provider
+type MyExecutor struct{}
+
+// Identifier returns the unique provider identifier
+func (MyExecutor) Identifier() string {
+    return providerKey
+}
+
+// PrepareRequest injects authentication credentials
+func (MyExecutor) PrepareRequest(req *http.Request, auth *coreauth.Auth) error {
+    if req == nil || auth == nil {
+        return nil
+    }
+    
+    // Inject API key from auth attributes
+    if auth.Attributes != nil {
+        if apiKey := strings.TrimSpace(auth.Attributes["api_key"]); apiKey != "" {
+            req.Header.Set("Authorization", "Bearer "+apiKey)
+        }
+    }
+    
+    // Add custom headers
+    req.Header.Set("X-Provider", providerKey)
+    
+    return nil
+}
+
+// Execute handles non-streaming requests
+func (MyExecutor) Execute(
+    ctx context.Context,
+    auth *coreauth.Auth,
+    req clipexec.Request,
+    opts clipexec.Options,
+) (clipexec.Response, error) {
+    // Get upstream endpoint
+    endpoint := "https://api.myprovider.com/v1/chat/completions"
+    if auth != nil && auth.Attributes != nil {
+        if ep := auth.Attributes["endpoint"]; ep != "" {
+            endpoint = ep
+        }
+    }
+    
+    // Create HTTP request
+    httpReq, err := http.NewRequestWithContext(
+        ctx,
+        http.MethodPost,
+        endpoint,
+        bytes.NewReader(req.Payload),
+    )
+    if err != nil {
+        return clipexec.Response{}, err
+    }
+    
+    httpReq.Header.Set("Content-Type", "application/json")
+    
+    // Inject credentials
+    if err := (MyExecutor{}).PrepareRequest(httpReq, auth); err != nil {
+        return clipexec.Response{}, err
+    }
+    
+    // Execute request
+    client := http.DefaultClient
+    resp, err := client.Do(httpReq)
+    if err != nil {
+        return clipexec.Response{}, err
+    }
+    defer resp.Body.Close()
+    
+    // Read response
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return clipexec.Response{}, err
+    }
+    
+    // Check for errors
+    if resp.StatusCode != http.StatusOK {
+        return clipexec.Response{}, &statusError{
+            code:    resp.StatusCode,
+            message: string(body),
+        }
+    }
+    
+    return clipexec.Response{
+        Payload: body,
+        Headers: resp.Header,
+    }, nil
+}
+
+// ExecuteStream handles streaming requests
+func (MyExecutor) ExecuteStream(
+    ctx context.Context,
+    auth *coreauth.Auth,
+    req clipexec.Request,
+    opts clipexec.Options,
+) (*clipexec.StreamResult, error) {
+    // Get endpoint
+    endpoint := "https://api.myprovider.com/v1/chat/completions"
+    if auth != nil && auth.Attributes != nil {
+        if ep := auth.Attributes["endpoint"]; ep != "" {
+            endpoint = ep
+        }
+    }
+    
+    // Create request
+    httpReq, err := http.NewRequestWithContext(
+        ctx,
+        http.MethodPost,
+        endpoint,
+        bytes.NewReader(req.Payload),
+    )
+    if err != nil {
+        return nil, err
+    }
+    
+    httpReq.Header.Set("Content-Type", "application/json")
+    httpReq.Header.Set("Accept", "text/event-stream")
+    
+    if err := (MyExecutor{}).PrepareRequest(httpReq, auth); err != nil {
+        return nil, err
+    }
+    
+    // Execute request
+    resp, err := http.DefaultClient.Do(httpReq)
+    if err != nil {
+        return nil, err
+    }
+    
+    if resp.StatusCode != http.StatusOK {
+        resp.Body.Close()
+        return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+    }
+    
+    // Create chunk channel
+    chunks := make(chan clipexec.StreamChunk, 16)
+    
+    go func() {
+        defer close(chunks)
+        defer resp.Body.Close()
+        
+        // Read streaming response
+        buf := make([]byte, 4096)
+        for {
+            n, err := resp.Body.Read(buf)
+            if n > 0 {
+                // Send chunk
+                chunk := make([]byte, n)
+                copy(chunk, buf[:n])
+                
+                select {
+                case chunks <- clipexec.StreamChunk{Payload: chunk}:
+                case <-ctx.Done():
+                    return
+                }
+            }
+            
+            if err != nil {
+                if err != io.EOF {
+                    chunks <- clipexec.StreamChunk{Err: err}
+                }
+                return
+            }
+        }
+    }()
+    
+    return &clipexec.StreamResult{
+        Headers: resp.Header,
+        Chunks:  chunks,
+    }, nil
+}
+
+// HttpRequest executes arbitrary HTTP requests
+func (MyExecutor) HttpRequest(
+    ctx context.Context,
+    auth *coreauth.Auth,
+    req *http.Request,
+) (*http.Response, error) {
+    if req == nil {
+        return nil, errors.New("request is nil")
+    }
+    
+    httpReq := req.WithContext(ctx)
+    if err := (MyExecutor{}).PrepareRequest(httpReq, auth); err != nil {
+        return nil, err
+    }
+    
+    return http.DefaultClient.Do(httpReq)
+}
+
+// Refresh refreshes authentication (if needed)
+func (MyExecutor) Refresh(
+    ctx context.Context,
+    auth *coreauth.Auth,
+) (*coreauth.Auth, error) {
+    // Return unchanged if no refresh needed
+    return auth, nil
+}
+
+// CountTokens estimates token usage (optional)
+func (MyExecutor) CountTokens(
+    ctx context.Context,
+    auth *coreauth.Auth,
+    req clipexec.Request,
+    opts clipexec.Options,
+) (clipexec.Response, error) {
+    return clipexec.Response{}, errors.New("token counting not implemented")
+}
+
+// statusError implements StatusError for HTTP status codes
+type statusError struct {
+    code    int
+    message string
+}
+
+func (e *statusError) Error() string {
+    return fmt.Sprintf("status %d: %s", e.code, e.message)
+}
+
+func (e *statusError) StatusCode() int {
+    return e.code
+}
+```
+
+### Registering Executors
+
+Register your executor with the core auth manager:
+
+```go
+import coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+
+coreManager := coreauth.NewManager(tokenStore, selector, nil)
+coreManager.RegisterExecutor(MyExecutor{})
+
+builder.WithCoreAuthManager(coreManager)
+```
+
+### Using Executors
+
+Executors are automatically selected based on the auth provider:
+
+```go
+// Auth record with matching provider
+auth := &coreauth.Auth{
+    ID:       "my-auth-1",
+    Provider: "myprovider", // Matches executor Identifier()
+    Attributes: map[string]string{
+        "api_key":  "sk-...",
+        "endpoint": "https://custom.api.com/v1",
+    },
+}
+
+coreManager.Register(ctx, auth)
+```
+
+Requests to models from "myprovider" will use `MyExecutor`.
+
+## Custom Translators
+
+Translators convert requests and responses between different API formats (e.g., OpenAI ↔ Custom Provider).
+
+### Translator Interface
+
+Register translators between format pairs:
+
+```go
+import sdktr "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+
+// Define formats
+const (
+    fOpenAI  = sdktr.Format("openai.chat")
+    fMyProv  = sdktr.Format("myprov.chat")
+)
+
+// Register translator
+sdktr.Register(
+    fOpenAI,  // Source format
+    fMyProv,  // Target format
+    requestTransform,
+    responseTransform,
+)
+```
+
+### Request Transformation
+
+```go
+requestTransform := func(model string, raw []byte, stream bool) []byte {
+    // Parse OpenAI format
+    var openAIReq struct {
+        Model    string                   `json:"model"`
+        Messages []map[string]interface{} `json:"messages"`
+        Stream   bool                     `json:"stream"`
+    }
+    json.Unmarshal(raw, &openAIReq)
+    
+    // Convert to provider format
+    providerReq := map[string]interface{}{
+        "model":  model,
+        "prompt": convertMessages(openAIReq.Messages),
+        "stream": stream,
+    }
+    
+    result, _ := json.Marshal(providerReq)
+    return result
+}
+```
+
+### Response Transformation
+
+```go
+responseTransform := sdktr.ResponseTransform{
+    // Non-streaming response
+    NonStream: func(
+        ctx context.Context,
+        model string,
+        originalReq, translatedReq, raw []byte,
+        param *any,
+    ) string {
+        // Parse provider response
+        var provResp struct {
+            Text string `json:"text"`
+        }
+        json.Unmarshal(raw, &provResp)
+        
+        // Convert to OpenAI format
+        openAIResp := map[string]interface{}{
+            "id":      "chatcmpl-" + generateID(),
+            "object":  "chat.completion",
+            "created": time.Now().Unix(),
+            "model":   model,
+            "choices": []map[string]interface{}{
+                {
+                    "index": 0,
+                    "message": map[string]interface{}{
+                        "role":    "assistant",
+                        "content": provResp.Text,
+                    },
+                    "finish_reason": "stop",
+                },
+            },
+        }
+        
+        result, _ := json.Marshal(openAIResp)
+        return string(result)
+    },
+    
+    // Streaming response
+    Stream: func(
+        ctx context.Context,
+        model string,
+        originalReq, translatedReq, raw []byte,
+        param *any,
+    ) []string {
+        // Parse streaming chunk
+        var provChunk struct {
+            Delta string `json:"delta"`
+            Done  bool   `json:"done"`
+        }
+        json.Unmarshal(raw, &provChunk)
+        
+        // Convert to OpenAI SSE format
+        if provChunk.Done {
+            return []string{"data: [DONE]\n\n"}
+        }
+        
+        openAIChunk := map[string]interface{}{
+            "id":      "chatcmpl-" + generateID(),
+            "object":  "chat.completion.chunk",
+            "created": time.Now().Unix(),
+            "model":   model,
+            "choices": []map[string]interface{}{
+                {
+                    "index": 0,
+                    "delta": map[string]interface{}{
+                        "content": provChunk.Delta,
+                    },
+                },
+            },
+        }
+        
+        data, _ := json.Marshal(openAIChunk)
+        return []string{"data: " + string(data) + "\n\n"}
+    },
+}
+```
+
+### Complete Translator Example
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "time"
+    
+    sdktr "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+)
+
+const (
+    fOpenAI = sdktr.Format("openai.chat")
+    fMyProv = sdktr.Format("myprov.chat")
+)
+
+func init() {
+    sdktr.Register(fOpenAI, fMyProv, transformRequest, transformResponse)
+}
+
+func transformRequest(model string, raw []byte, stream bool) []byte {
+    var req struct {
+        Messages []struct {
+            Role    string `json:"role"`
+            Content string `json:"content"`
+        } `json:"messages"`
+        Temperature float64 `json:"temperature,omitempty"`
+        MaxTokens   int     `json:"max_tokens,omitempty"`
+    }
+    
+    if err := json.Unmarshal(raw, &req); err != nil {
+        return raw
+    }
+    
+    // Build prompt from messages
+    var prompt string
+    for _, msg := range req.Messages {
+        prompt += msg.Role + ": " + msg.Content + "\n"
+    }
+    
+    // Create provider request
+    provReq := map[string]interface{}{
+        "model":       model,
+        "prompt":      prompt,
+        "stream":      stream,
+        "temperature": req.Temperature,
+    }
+    
+    if req.MaxTokens > 0 {
+        provReq["max_tokens"] = req.MaxTokens
+    }
+    
+    result, _ := json.Marshal(provReq)
+    return result
+}
+
+var transformResponse = sdktr.ResponseTransform{
+    NonStream: func(ctx context.Context, model string, origReq, transReq, raw []byte, param *any) string {
+        var provResp struct {
+            Text       string `json:"text"`
+            FinishReason string `json:"finish_reason"`
+        }
+        
+        if err := json.Unmarshal(raw, &provResp); err != nil {
+            return string(raw)
+        }
+        
+        resp := map[string]interface{}{
+            "id":      "chat-" + generateID(),
+            "object":  "chat.completion",
+            "created": time.Now().Unix(),
+            "model":   model,
+            "choices": []map[string]interface{}{
+                {
+                    "index": 0,
+                    "message": map[string]string{
+                        "role":    "assistant",
+                        "content": provResp.Text,
+                    },
+                    "finish_reason": provResp.FinishReason,
+                },
+            },
+        }
+        
+        result, _ := json.Marshal(resp)
+        return string(result)
+    },
+    
+    Stream: func(ctx context.Context, model string, origReq, transReq, raw []byte, param *any) []string {
+        var chunk struct {
+            Delta string `json:"delta"`
+            Done  bool   `json:"done"`
+        }
+        
+        if err := json.Unmarshal(raw, &chunk); err != nil {
+            return []string{string(raw)}
+        }
+        
+        if chunk.Done {
+            return []string{"data: [DONE]\n\n"}
+        }
+        
+        sseChunk := map[string]interface{}{
+            "id":      "chat-" + generateID(),
+            "object":  "chat.completion.chunk",
+            "created": time.Now().Unix(),
+            "model":   model,
+            "choices": []map[string]interface{}{
+                {
+                    "index": 0,
+                    "delta": map[string]string{
+                        "content": chunk.Delta,
+                    },
+                },
+            },
+        }
+        
+        data, _ := json.Marshal(sseChunk)
+        return []string{"data: " + string(data) + "\n\n"}
+    },
+}
+
+func generateID() string {
+    return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Access Providers" icon="shield" href="/sdk/access">
+    Implement custom authentication
+  </Card>
+  <Card title="File Watching" icon="eye" href="/sdk/watcher">
+    Configuration and auth file watching
+  </Card>
+  <Card title="Usage Tracking" icon="chart-line" href="/sdk/overview">
+    Monitor API usage
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/router-for-me/CLIProxyAPI/tree/main/examples">
+    Browse complete examples
+  </Card>
+</CardGroup>

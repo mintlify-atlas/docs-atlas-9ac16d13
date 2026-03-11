@@ -1,0 +1,633 @@
+---
+title: 'Configuration Watching'
+description: 'Hot-reload configuration and authentication files with automatic file system monitoring'
+---
+
+## Overview
+
+The watcher monitors configuration and authentication files for changes and triggers automatic reloads without restarting the service. This enables:
+
+- Hot-reload of `config.yaml` when modified
+- Automatic detection of auth file changes in the auth directory
+- Incremental updates for individual auth files
+- Debounced reload to handle rapid successive changes
+- Cross-platform file system event handling
+
+## Watcher Interface
+
+The watcher is implemented in the internal package but exposed through the service builder:
+
+```go internal/watcher/watcher.go
+package watcher
+
+import (
+    "context"
+    "time"
+    
+    "github.com/fsnotify/fsnotify"
+    "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+    coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+)
+
+// Watcher manages file watching for configuration and authentication files
+type Watcher struct {
+    configPath        string
+    authDir           string
+    config            *config.Config
+    reloadCallback    func(*config.Config)
+    watcher           *fsnotify.Watcher
+    lastAuthHashes    map[string]string
+    lastConfigHash    string
+    authQueue         chan<- AuthUpdate
+    // ... internal synchronization fields
+}
+
+// NewWatcher creates a new file watcher instance
+func NewWatcher(
+    configPath, authDir string, 
+    reloadCallback func(*config.Config),
+) (*Watcher, error)
+
+// Start begins watching the configuration file and authentication directory
+func (w *Watcher) Start(ctx context.Context) error
+
+// Stop stops the file watcher
+func (w *Watcher) Stop() error
+
+// SetConfig updates the current configuration
+func (w *Watcher) SetConfig(cfg *config.Config)
+
+// SetAuthUpdateQueue sets the queue used to emit auth updates.
+func (w *Watcher) SetAuthUpdateQueue(queue chan<- AuthUpdate)
+```
+
+## Authentication Updates
+
+Auth file changes trigger incremental updates through a structured event system:
+
+```go internal/watcher/watcher.go
+// AuthUpdateAction represents the type of change detected in auth sources.
+type AuthUpdateAction string
+
+const (
+    AuthUpdateActionAdd    AuthUpdateAction = "add"
+    AuthUpdateActionModify AuthUpdateAction = "modify"
+    AuthUpdateActionDelete AuthUpdateAction = "delete"
+)
+
+// AuthUpdate describes an incremental change to auth configuration.
+type AuthUpdate struct {
+    Action AuthUpdateAction
+    ID     string
+    Auth   *coreauth.Auth
+}
+```
+
+## File Watching Behavior
+
+### Configuration File Watching
+
+The watcher monitors `config.yaml` for changes:
+
+```go internal/watcher/config_reload.go
+const (
+    configReloadDebounce = 150 * time.Millisecond
+)
+
+// Reload is triggered when:
+// - File is written (fsnotify.Write)
+// - File is created (fsnotify.Create)
+// - File is renamed (fsnotify.Rename)
+//
+// Changes are debounced to avoid multiple rapid reloads
+```
+
+**Reload process:**
+
+1. Detect file system event (Write, Create, or Rename)
+2. Wait 150ms debounce period (handles rapid successive writes)
+3. Read file and compute SHA256 hash
+4. Compare with previous hash
+5. If changed, reload configuration and trigger callback
+6. Persist changes if persistence is configured
+
+### Authentication File Watching
+
+The watcher monitors all `.json` files in the auth directory:
+
+```go internal/watcher/events.go
+const (
+    // replaceCheckDelay is a short delay to allow atomic replace (rename) to settle
+    // before deciding whether a Remove event indicates a real deletion.
+    replaceCheckDelay        = 50 * time.Millisecond
+    authRemoveDebounceWindow = 1 * time.Second
+)
+
+// Auth changes are processed incrementally:
+// - Add: New auth file detected
+// - Modify: Existing auth file changed (hash comparison)
+// - Delete: Auth file removed
+```
+
+**Incremental update process:**
+
+1. Detect `.json` file event in auth directory
+2. Compute SHA256 hash of file contents
+3. Compare with cached hash
+4. If unchanged, skip processing
+5. If changed, parse auth file and generate update events
+6. Emit `AuthUpdate` events to registered consumers
+7. Persist changes if persistence is configured
+
+## Integration with Service Builder
+
+The watcher is automatically configured when building a service:
+
+```go
+package main
+
+import (
+    "context"
+    
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+func main() {
+    cfg, err := config.LoadConfig("config.yaml")
+    if err != nil {
+        panic(err)
+    }
+    
+    // Watcher is automatically created and started
+    svc, err := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml"). // Required for watcher
+        Build()
+    if err != nil {
+        panic(err)
+    }
+    
+    // Watcher starts when service runs
+    svc.Run(context.Background())
+}
+```
+
+## Custom Watcher Factory
+
+Override the default watcher with a custom implementation:
+
+```go
+package main
+
+import (
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+type CustomWatcher struct {
+    // Custom implementation
+}
+
+func (w *CustomWatcher) Start(ctx context.Context) error {
+    // Custom start logic
+    return nil
+}
+
+func (w *CustomWatcher) Stop() error {
+    // Custom stop logic
+    return nil
+}
+
+func (w *CustomWatcher) SetConfig(cfg *config.Config) {
+    // Handle config updates
+}
+
+func (w *CustomWatcher) SetAuthUpdateQueue(queue chan<- cliproxy.AuthUpdate) {
+    // Handle auth update queue
+}
+
+func main() {
+    cfg, _ := config.LoadConfig("config.yaml")
+    
+    // Custom watcher factory
+    factory := func(configPath, authDir string, reload func(*config.Config)) (*cliproxy.WatcherWrapper, error) {
+        customWatcher := &CustomWatcher{}
+        return &cliproxy.WatcherWrapper{
+            Watcher: customWatcher,
+        }, nil
+    }
+    
+    svc, _ := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        WithWatcherFactory(factory).
+        Build()
+    
+    svc.Run(context.Background())
+}
+```
+
+## Configuration Reload Events
+
+The watcher detects and logs configuration changes:
+
+```go internal/watcher/config_reload.go
+// Material changes trigger full client reload:
+// - Auth directory path changed
+// - Retry configuration changed
+// - Model prefix/alias configuration changed
+// - OAuth excluded models changed
+
+// The watcher logs detailed change information:
+// - Field-by-field comparison
+// - Hash-based change detection
+// - Affected OAuth providers
+```
+
+### Example Log Output
+
+```
+[INFO] config file changed, reloading: config.yaml
+[DEBUG] config changes detected:
+[DEBUG]   port changed: 8080 -> 8081
+[DEBUG]   log_level changed: info -> debug
+[INFO] config successfully reloaded, triggering client reload
+[INFO] full client load complete - 15 clients (10 auth files + 3 Gemini API keys + 2 Claude API keys)
+```
+
+## Authentication File Events
+
+The watcher emits detailed logs for auth changes:
+
+```go internal/watcher/clients.go
+// Field-level change detection for auth files:
+// - Provider changes
+// - Credential updates
+// - Attribute modifications
+// - Metadata changes
+
+// Incremental update process:
+// 1. Parse new auth file
+// 2. Compare with cached version
+// 3. Generate AuthUpdate events
+// 4. Dispatch to consumers
+```
+
+### Example Log Output
+
+```
+[INFO] auth file changed (Write): gemini_account1.json, processing incrementally
+[DEBUG] auth field changes for gemini_account1.json:
+[DEBUG]   provider: gemini (unchanged)
+[DEBUG]   credentials.access_token: [CHANGED]
+[DEBUG]   expires_at: 2024-03-15T10:30:00Z -> 2024-03-15T11:30:00Z
+```
+
+## Debouncing and Deduplication
+
+The watcher uses multiple strategies to handle noisy file systems:
+
+### Configuration Debouncing
+
+```go internal/watcher/config_reload.go
+const configReloadDebounce = 150 * time.Millisecond
+
+// Rapid successive writes are collapsed into a single reload
+// Timer resets on each new event
+```
+
+**Example timeline:**
+```
+t=0ms:   Write event → schedule reload at t=150ms
+t=50ms:  Write event → reschedule reload at t=200ms
+t=100ms: Write event → reschedule reload at t=250ms
+t=250ms: No new events → reload executes
+```
+
+### Auth File Debouncing
+
+```go internal/watcher/events.go
+const authRemoveDebounceWindow = 1 * time.Second
+
+// Remove events are debounced to handle atomic file replacement
+// Common pattern: editor saves by write-to-temp + rename
+```
+
+**Atomic replacement detection:**
+```
+1. Receive Remove event for "auth.json"
+2. Wait 50ms for file system to settle
+3. Check if file still exists
+4. If exists → treat as modify (atomic replace)
+5. If missing → treat as delete
+```
+
+### Hash-Based Deduplication
+
+```go internal/watcher/events.go
+// SHA256 hash computed for each file
+// Changes only processed if hash differs
+// Prevents redundant reloads from spurious events
+
+func (w *Watcher) authFileUnchanged(path string) (bool, error) {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return false, err
+    }
+    
+    sum := sha256.Sum256(data)
+    curHash := hex.EncodeToString(sum[:])
+    
+    normalized := w.normalizeAuthPath(path)
+    w.clientsMutex.RLock()
+    prevHash, ok := w.lastAuthHashes[normalized]
+    w.clientsMutex.RUnlock()
+    
+    if ok && prevHash == curHash {
+        return true, nil
+    }
+    return false, nil
+}
+```
+
+## Cross-Platform Path Handling
+
+The watcher normalizes paths for consistent behavior across operating systems:
+
+```go internal/watcher/events.go
+func (w *Watcher) normalizeAuthPath(path string) string {
+    trimmed := strings.TrimSpace(path)
+    if trimmed == "" {
+        return ""
+    }
+    cleaned := filepath.Clean(trimmed)
+    if runtime.GOOS == "windows" {
+        // Remove long path prefix and normalize case
+        cleaned = strings.TrimPrefix(cleaned, `\\?\`)
+        cleaned = strings.ToLower(cleaned)
+    }
+    return cleaned
+}
+```
+
+**Platform-specific behaviors:**
+
+- **Linux:** Case-sensitive paths, direct inotify events
+- **macOS:** Case-insensitive by default, FSEvents-based
+- **Windows:** Case-insensitive, long path prefix handling
+
+## Runtime Authentication Updates
+
+External systems can inject auth updates through the watcher:
+
+```go internal/watcher/watcher.go
+// DispatchRuntimeAuthUpdate allows external runtime providers (e.g., websocket-driven auths)
+// to push auth updates through the same queue used by file/config watchers.
+// Returns true if the update was enqueued; false if no queue is configured.
+func (w *Watcher) DispatchRuntimeAuthUpdate(update AuthUpdate) bool
+```
+
+### Example: WebSocket Auth Provider
+
+```go
+package main
+
+import (
+    "github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
+    coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+)
+
+func handleWebSocketAuth(w *watcher.Watcher, auth *coreauth.Auth) {
+    // Inject runtime auth update
+    success := w.DispatchRuntimeAuthUpdate(watcher.AuthUpdate{
+        Action: watcher.AuthUpdateActionAdd,
+        ID:     auth.ID,
+        Auth:   auth,
+    })
+    
+    if !success {
+        log.Warn("Failed to dispatch runtime auth update - queue not configured")
+    }
+}
+```
+
+## Persistence Integration
+
+The watcher supports optional persistence for synchronized storage:
+
+```go internal/watcher/clients.go
+// If token store implements persistence interface,
+// changes are automatically persisted:
+
+type storePersister interface {
+    PersistConfig(ctx context.Context) error
+    PersistAuthFiles(ctx context.Context, message string, paths ...string) error
+}
+
+// Persistence happens asynchronously after changes
+func (w *Watcher) persistConfigAsync() {
+    if w.storePersister == nil {
+        return
+    }
+    go func() {
+        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+        if err := w.storePersister.PersistConfig(ctx); err != nil {
+            log.Errorf("failed to persist config change: %v", err)
+        }
+    }()
+}
+```
+
+## Server Update Coordination
+
+The watcher coordinates server updates with debouncing:
+
+```go internal/watcher/clients.go
+const serverUpdateDebounce = 1 * time.Second
+
+// Server updates are debounced to batch rapid changes
+// Prevents server churn during bulk auth updates
+
+func (w *Watcher) triggerServerUpdate(cfg *config.Config) {
+    // Rate-limited server callback
+    // Ensures minimum 1 second between updates
+}
+```
+
+## Configuration Example
+
+Minimal configuration for file watching:
+
+```yaml config.yaml
+# Server configuration
+host: localhost
+port: 8080
+
+# Auth directory to watch
+auth_dir: ./auth
+
+# Log level affects watcher logging
+log_level: debug
+
+# Debug mode enables detailed change logs
+debug: true
+```
+
+## Monitoring Watcher Activity
+
+Enable debug logging to observe watcher behavior:
+
+```yaml config.yaml
+debug: true
+log_level: debug
+```
+
+**Debug logs include:**
+- File system events received
+- Hash comparison results
+- Field-level change detection
+- Debounce and deduplication decisions
+- Reload timing and performance
+
+### Example Debug Output
+
+```
+[DEBUG] watching config file: /app/config.yaml
+[DEBUG] watching auth directory: /app/auth
+[DEBUG] file system event detected: Write /app/auth/gemini.json
+[DEBUG] auth file change details - operation: Write, timestamp: 2024-03-15 10:30:45.123
+[DEBUG] auth field changes for gemini.json:
+[DEBUG]   credentials.access_token: [CHANGED]
+[INFO] auth file changed (Write): gemini.json, processing incrementally
+[DEBUG] auth providers reconciled (added=0 updated=1 removed=0)
+```
+
+## Best Practices
+
+### 1. Use Absolute Paths
+
+```go
+import "path/filepath"
+
+configPath, _ := filepath.Abs("config.yaml")
+authDir, _ := filepath.Abs("./auth")
+
+svc, _ := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    WithConfigPath(configPath).
+    Build()
+```
+
+### 2. Graceful Shutdown
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+// Handle signals
+signalChan := make(chan os.Signal, 1)
+signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
+go func() {
+    <-signalChan
+    cancel() // Stops watcher gracefully
+}()
+
+svc.Run(ctx)
+```
+
+### 3. Monitor Watcher Errors
+
+```go
+// The watcher logs errors internally
+// Monitor logs for:
+// - Permission errors reading files
+// - Parse errors in auth files
+// - File system watcher errors
+
+// Example: Permission error
+// [ERROR] failed to read config file for hash check: permission denied
+
+// Example: Parse error
+// [ERROR] failed to parse auth file gemini.json: invalid JSON
+```
+
+### 4. Test Configuration Changes
+
+```bash
+# Test config reload
+echo "port: 8081" >> config.yaml
+# Watch logs for reload message
+
+# Test auth file changes
+touch auth/new_auth.json
+echo '{"provider":"gemini"}' > auth/new_auth.json
+# Watch logs for incremental update
+
+# Test file removal
+rm auth/old_auth.json
+# Watch logs for delete event
+```
+
+## Troubleshooting
+
+### Watcher Not Detecting Changes
+
+**Problem:** File changes not triggering reloads
+
+**Solutions:**
+1. Verify file paths are absolute
+2. Check file permissions (read access required)
+3. Ensure file system supports inotify/FSEvents
+4. Check for file system mount options (some NFS/network mounts don't support events)
+5. Enable debug logging to see events
+
+### Rapid Successive Reloads
+
+**Problem:** Too many reloads happening
+
+**Cause:** Editor or tool making multiple rapid writes
+
+**Solution:** Debouncing is automatic, but you can:
+1. Configure editor to write atomically
+2. Use single-write operations
+3. Check if backup files (`.swp`, `.bak`) are triggering events
+
+### Missing Auth Updates
+
+**Problem:** Auth file changes not reflected
+
+**Solutions:**
+1. Verify files have `.json` extension (only `.json` files watched)
+2. Check file is in configured auth directory
+3. Ensure JSON is valid (parse errors skip update)
+4. Check SHA256 hash (unchanged files are skipped)
+
+### High CPU Usage
+
+**Problem:** Watcher consuming excessive CPU
+
+**Solutions:**
+1. Reduce number of files in auth directory
+2. Avoid watching directories with frequent changes
+3. Check for file system loops (symlinks)
+4. Monitor for "hot" files being written continuously
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Service Builder" icon="hammer" href="/sdk/embedding">
+    Configure and build the proxy service
+  </Card>
+  <Card title="Access Providers" icon="shield" href="/sdk/access">
+    Implement custom authentication
+  </Card>
+  <Card title="Advanced Features" icon="gears" href="/sdk/advanced">
+    Custom executors and translators
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/sdk/getting-started">
+    Build your first integration
+  </Card>
+</CardGroup>

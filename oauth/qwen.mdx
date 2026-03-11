@@ -1,0 +1,364 @@
+---
+title: 'Qwen OAuth'
+description: 'Authenticate with Qwen Code using device-based OAuth'
+---
+
+## Overview
+
+Qwen authentication provides access to Alibaba Cloud's Qwen code generation and AI models. The CLI Proxy API uses a device-based OAuth flow that doesn't require a browser on the server.
+
+## Prerequisites
+
+Before authenticating with Qwen, ensure you have:
+
+- A Qwen account with API access
+- CLIProxyAPI server installed and configured
+- Email address associated with your Qwen account
+- A device with a web browser (can be different from the server)
+
+## Authentication
+
+Qwen uses a device-based authentication flow similar to OAuth device authorization grant.
+
+<Steps>
+  <Step title="Start the login process">
+    Run the following command to initiate Qwen authentication:
+
+    ```bash
+    ./CLIProxyAPI -qwen-login
+    ```
+
+    The CLI will display instructions for device-based authentication.
+  </Step>
+
+  <Step title="Complete device authorization">
+    Follow the on-screen prompts:
+    1. A URL will be displayed for authorization
+    2. You may be asked to enter a device code or verification code
+    3. Complete the authorization on any device with a browser
+    4. The CLI polls for completion automatically
+  </Step>
+
+  <Step title="Provide email address">
+    When prompted, enter your Qwen account email:
+
+    ```
+    Enter your email address:
+    user@example.com
+    ```
+
+    This email is used to:
+    - Identify your account credentials
+    - Name the token file for organization
+    - Associate tokens with your Qwen account
+  </Step>
+
+  <Step title="Confirmation">
+    After successful authentication:
+
+    ```
+    Authentication saved to /path/to/auth/qwen-<email>-<timestamp>.json
+    Qwen authentication successful!
+    ```
+
+    Your tokens are saved and ready to use.
+  </Step>
+</Steps>
+
+<Note>
+Qwen authentication requires an email address. If you don't provide one when prompted, authentication will fail with an "EmailRequiredError".
+</Note>
+
+## Advanced Options
+
+### Manual Browser Mode
+
+If you're on a headless server or prefer manual URL entry:
+
+```bash
+./CLIProxyAPI -qwen-login -no-browser
+```
+
+The CLI will:
+- Display the authorization URL
+- Show the device/verification code
+- Wait for you to complete authorization manually
+- Not attempt to open a browser automatically
+
+### Custom OAuth Callback Port
+
+If Qwen's authentication requires a callback server, specify a custom port:
+
+```bash
+./CLIProxyAPI -qwen-login -oauth-callback-port 8888
+```
+
+<Tip>
+The `-no-browser` flag is particularly useful when authenticating from:
+- SSH sessions
+- Docker containers
+- Headless servers
+- Cloud VMs without GUI
+</Tip>
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Set via `-auth-dir` or in config file
+- Filename format: `qwen-<email>-<timestamp>.json`
+- Example: `qwen-user@example.com-1234567890.json`
+
+### Token Contents
+
+The stored token file contains:
+- OAuth 2.0 access token
+- Refresh token (if provided)
+- Account email address
+- Token expiration timestamp
+- Authentication metadata
+
+### Multiple Accounts
+
+You can authenticate with multiple Qwen accounts:
+
+```bash
+# First account
+./CLIProxyAPI -qwen-login
+# Enter: user1@example.com
+
+# Second account (after first completes)
+./CLIProxyAPI -qwen-login
+# Enter: user2@example.com
+```
+
+Each account:
+- Creates a separate token file
+- Is identified by email address
+- Is automatically loaded by the server
+- Participates in credential rotation
+
+Benefits:
+- Increased rate limits through multiple accounts
+- Load balancing across credentials
+- Automatic failover if one account hits limits
+
+## Email Address Requirements
+
+The email address you provide during authentication:
+
+- **Must match** your Qwen account email
+- **Is required** - authentication fails without it
+- **Is case-insensitive** for file naming
+- **Used for identification** in logs and monitoring
+
+### Email Validation
+
+If you see an "EmailRequiredError":
+
+```
+Qwen authentication failed: email address is required
+```
+
+**Solution:** Run the login command again and provide your email when prompted.
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/qwen-*.json
+    ```
+
+    You should see your Qwen token file(s) listed.
+  </Step>
+
+  <Step title="Verify email in filename">
+    The filename should contain your email address (sanitized):
+    ```
+    qwen-user@example.com-1234567890.json
+    ```
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    Check logs for messages indicating Qwen credentials were loaded successfully.
+  </Step>
+
+  <Step title="Make a test API request">
+    Send a request to test Qwen access:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "qwen-coder",
+        "messages": [{"role": "user", "content": "Write a hello world in Python"}]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Email required error
+
+**Cause:** No email address was provided during authentication.
+
+**Solution:**
+1. Run the login command again
+2. When prompted, enter your Qwen account email
+3. Complete the device authorization
+
+### Invalid email format
+
+**Cause:** Email address format is invalid.
+
+**Solution:** Ensure you enter a valid email address:
+- Must contain `@` symbol
+- Must have a domain (e.g., `.com`, `.net`)
+- No spaces or special characters except `@`, `.`, `+`, `-`, `_`
+
+### Device code expired
+
+**Cause:** The device/verification code timeout period expired.
+
+**Solution:**
+1. Run `-qwen-login` again to generate a new code
+2. Complete authorization more quickly
+3. Check your network connectivity
+
+### Authorization pending timeout
+
+**Cause:** The CLI timed out waiting for you to complete authorization.
+
+**Solution:**
+- Complete the device authorization on the browser
+- Ensure you're using the correct URL and code
+- Check that you're signed into the correct Qwen account
+- Try authentication again
+
+### Token not saving
+
+**Cause:** Permission issues or invalid auth directory.
+
+**Solution:**
+```bash
+# Create auth directory
+mkdir -p /path/to/auth-dir
+
+# Fix permissions
+chmod 755 /path/to/auth-dir
+
+# Verify it's writable
+touch /path/to/auth-dir/test && rm /path/to/auth-dir/test
+```
+
+### Browser opened but shouldn't have
+
+**Cause:** Default behavior attempts to open browser.
+
+**Solution:** Use the `-no-browser` flag:
+```bash
+./CLIProxyAPI -qwen-login -no-browser
+```
+
+### Network connectivity issues
+
+**Cause:** Cannot reach Qwen's authentication servers.
+
+**Solution:**
+- Check your internet connection
+- Verify firewall rules allow outbound HTTPS
+- Check if Qwen services are operational
+- Try from a different network if possible
+
+### Wrong account authenticated
+
+**Cause:** Signed into different Qwen account in browser.
+
+**Solution:**
+1. Sign out of the current Qwen account in your browser
+2. Run `-qwen-login` again
+3. Sign in with the correct account when prompted
+4. Complete authorization
+
+## Token Refresh
+
+Qwen tokens are automatically refreshed by the server:
+
+- The server monitors token expiration
+- Refresh tokens are used to obtain new access tokens
+- Refreshed tokens are saved back to the token file
+- No manual intervention required
+
+If refresh fails:
+- Check server logs for errors
+- Ensure network connectivity
+- Re-authenticate if tokens are invalid
+
+## Re-authentication
+
+To re-authenticate a Qwen account:
+
+1. Delete the existing token file:
+   ```bash
+   rm /path/to/auth-dir/qwen-user@example.com-*.json
+   ```
+
+2. Run the login command again:
+   ```bash
+   ./CLIProxyAPI -qwen-login
+   ```
+
+3. Enter the same email address when prompted
+4. Complete device authorization again
+
+<Tip>
+Re-authentication is useful when:
+- Tokens expire and can't be refreshed
+- You need to update permissions
+- Your Qwen account credentials changed
+- You encounter persistent authentication errors
+</Tip>
+
+## Security Best Practices
+
+- **Protect token files** - Never share or commit to version control
+- **Use secure permissions** - Token files should be `0600` (owner read/write only)
+- **Monitor usage** - Check logs for unusual authentication activity
+- **Rotate credentials** - Re-authenticate periodically
+- **Validate email** - Ensure email matches your actual Qwen account
+- **Secure auth directory** - Use appropriate directory permissions (`755`)
+
+<Warning>
+Your token files contain credentials that provide full access to your Qwen account. Keep them secure and never share them publicly.
+</Warning>
+
+## Multiple Devices
+
+The device-based flow allows authentication from different locations:
+
+1. Run `-qwen-login` on your server
+2. Complete authorization on your laptop/desktop browser
+3. Tokens are saved on the server
+4. The authorization device doesn't need access to the server
+
+This is ideal for:
+- Remote servers accessed via SSH
+- Cloud VMs without direct browser access
+- Docker containers
+- Automated deployment pipelines
+
+## Related Resources
+
+- [Qwen Documentation](https://help.aliyun.com/zh/dashscope/)
+- [OAuth 2.0 Device Authorization Grant](https://oauth.net/2/device-flow/)
+- [Configuration Guide](/configuration/server)

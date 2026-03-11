@@ -1,0 +1,288 @@
+---
+title: Docker Deployment
+description: Deploy CLI Proxy API using Docker and Docker Compose
+---
+
+CLI Proxy API provides official Docker images and Docker Compose configurations for easy deployment.
+
+## Quick Start
+
+<Steps>
+  <Step title="Pull the Docker image">
+    ```bash
+    docker pull eceasy/cli-proxy-api:latest
+    ```
+  </Step>
+
+  <Step title="Create configuration file">
+    Create a `config.yaml` file based on the [example configuration](https://github.com/router-for-me/CLIProxyAPI/blob/main/config.example.yaml):
+
+    ```yaml
+    port: 8317
+    log_level: info
+    # Add your configuration here
+    ```
+  </Step>
+
+  <Step title="Run the container">
+    ```bash
+    docker run -d \
+      --name cli-proxy-api \
+      -p 8317:8317 \
+      -v $(pwd)/config.yaml:/CLIProxyAPI/config.yaml \
+      -v $(pwd)/auths:/root/.cli-proxy-api \
+      -v $(pwd)/logs:/CLIProxyAPI/logs \
+      eceasy/cli-proxy-api:latest
+    ```
+  </Step>
+</Steps>
+
+## Docker Compose Deployment
+
+For production environments, use Docker Compose for easier management.
+
+### Using Pre-built Image
+
+<Steps>
+  <Step title="Create docker-compose.yml">
+    ```yaml docker-compose.yml
+    services:
+      cli-proxy-api:
+        image: eceasy/cli-proxy-api:latest
+        pull_policy: always
+        container_name: cli-proxy-api
+        environment:
+          DEPLOY: ${DEPLOY:-}
+        ports:
+          - "8317:8317"
+          - "8085:8085"
+          - "1455:1455"
+          - "54545:54545"
+          - "51121:51121"
+          - "11451:11451"
+        volumes:
+          - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml
+          - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
+          - ${CLI_PROXY_LOG_PATH:-./logs}:/CLIProxyAPI/logs
+        restart: unless-stopped
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    docker compose up -d
+    ```
+  </Step>
+
+  <Step title="View logs">
+    ```bash
+    docker compose logs -f
+    ```
+  </Step>
+</Steps>
+
+### Building from Source
+
+To build the Docker image from source:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/router-for-me/CLIProxyAPI.git
+    cd CLIProxyAPI
+    ```
+  </Step>
+
+  <Step title="Build with version information">
+    ```bash
+    export CLI_PROXY_IMAGE="cli-proxy-api:local"
+    VERSION="$(git describe --tags --always --dirty)"
+    COMMIT="$(git rev-parse --short HEAD)"
+    BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    docker compose build \
+      --build-arg VERSION="${VERSION}" \
+      --build-arg COMMIT="${COMMIT}" \
+      --build-arg BUILD_DATE="${BUILD_DATE}"
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    docker compose up -d --remove-orphans --pull never
+    ```
+  </Step>
+</Steps>
+
+Alternatively, use the provided build script:
+
+```bash
+./docker-build.sh
+```
+
+The script will prompt you to:
+1. Run using pre-built image (recommended)
+2. Build from source and run (for developers)
+
+## Volume Mounts
+
+The container uses three volume mounts:
+
+| Volume | Path in Container | Purpose |
+|--------|------------------|----------|
+| Configuration | `/CLIProxyAPI/config.yaml` | Main configuration file |
+| Authentication | `/root/.cli-proxy-api` | OAuth tokens and credentials |
+| Logs | `/CLIProxyAPI/logs` | Application logs |
+
+### Configuration Volume
+
+Mount your `config.yaml` file:
+
+```bash
+-v /path/to/config.yaml:/CLIProxyAPI/config.yaml
+```
+
+### Authentication Volume
+
+Store OAuth tokens and credentials:
+
+```bash
+-v /path/to/auths:/root/.cli-proxy-api
+```
+
+### Logs Volume
+
+Persist application logs:
+
+```bash
+-v /path/to/logs:/CLIProxyAPI/logs
+```
+
+## Environment Variables
+
+### Docker Compose Variables
+
+Customize deployment with environment variables:
+
+```bash
+export CLI_PROXY_IMAGE="eceasy/cli-proxy-api:v6.0.0"
+export CLI_PROXY_CONFIG_PATH="./config.yaml"
+export CLI_PROXY_AUTH_PATH="./auths"
+export CLI_PROXY_LOG_PATH="./logs"
+export DEPLOY="cloud"
+
+docker compose up -d
+```
+
+### Build Arguments
+
+When building from source:
+
+| Argument | Description | Default |
+|----------|-------------|----------|
+| `VERSION` | Version tag | `dev` |
+| `COMMIT` | Git commit hash | `none` |
+| `BUILD_DATE` | Build timestamp | `unknown` |
+
+## Network Configuration
+
+### Exposed Ports
+
+The default configuration exposes multiple ports:
+
+- `8317` - Main API server (default)
+- `8085` - Additional service port
+- `1455` - Additional service port
+- `54545` - Additional service port
+- `51121` - Additional service port
+- `11451` - Additional service port
+
+Customize ports in your `docker-compose.yml` or with `-p` flags:
+
+```bash
+docker run -p 9000:8317 ...
+```
+
+### Timezone Configuration
+
+The container sets timezone to `Asia/Shanghai` by default. The Dockerfile includes:
+
+```dockerfile
+ENV TZ=Asia/Shanghai
+RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
+```
+
+Override with the `TZ` environment variable:
+
+```bash
+docker run -e TZ=America/New_York ...
+```
+
+## Docker Build Script Features
+
+The `docker-build.sh` script provides additional features:
+
+### Usage Statistics Preservation
+
+Preserve usage statistics across container rebuilds:
+
+```bash
+./docker-build.sh --with-usage
+```
+
+On first run, you'll be prompted for the management API key. The script:
+1. Exports usage statistics before stopping the container
+2. Rebuilds/restarts the container
+3. Imports statistics back into the new container
+
+The API key is stored in `temp/stats/.api_secret` for subsequent runs.
+
+## Health Check
+
+Verify the service is running:
+
+```bash
+curl http://localhost:8317/
+```
+
+## Container Management
+
+### View Logs
+
+```bash
+# All logs
+docker compose logs -f
+
+# Last 100 lines
+docker compose logs --tail=100
+```
+
+### Stop the Service
+
+```bash
+docker compose down
+```
+
+### Restart the Service
+
+```bash
+docker compose restart
+```
+
+### Update to Latest Version
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cloud Deployment" icon="cloud" href="/deployment/cloud">
+    Deploy in cloud environments with advanced configuration
+  </Card>
+  <Card title="Storage Backends" icon="database" href="/deployment/storage-backends">
+    Configure PostgreSQL, Git, or Object Storage backends
+  </Card>
+</CardGroup>

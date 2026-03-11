@@ -1,0 +1,316 @@
+---
+title: Custom Provider Example
+description: Learn how to create and integrate a custom AI provider with the CLI Proxy API SDK
+---
+
+## Overview
+
+This example demonstrates how to create a custom AI provider executor and integrate it with the CLI Proxy API server. You'll learn how to:
+
+- Implement the `Executor` interface for a custom provider
+- Register custom translators for request/response transformation
+- Integrate authentication and credentials
+- Register custom models in the model registry
+- Add custom middleware and logging
+
+## Use Case
+
+Use this pattern when you need to integrate an AI provider that isn't natively supported by CLI Proxy API. The example creates a custom provider called "myprov" that can:
+
+- Handle authentication via API keys
+- Transform requests between OpenAI format and the provider's format
+- Support both streaming and non-streaming responses
+- Register custom models that appear in `/v1/models`
+
+## Complete Source Code
+
+```go
+// Package main demonstrates how to create a custom AI provider executor
+// and integrate it with the CLI Proxy API server. This example shows how to:
+// - Create a custom executor that implements the Executor interface
+// - Register custom translators for request/response transformation
+// - Integrate the custom provider with the SDK server
+// - Register custom models in the model registry
+//
+// This example uses a simple echo service (httpbin.org) as the upstream API
+// for demonstration purposes. In a real implementation, you would replace
+// this with your actual AI service provider.
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/api"
+	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	clipexec "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/logging"
+	sdktr "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+)
+
+const (
+	// providerKey is the identifier for our custom provider.
+	providerKey = "myprov"
+
+	// fOpenAI represents the OpenAI chat format.
+	fOpenAI = sdktr.Format("openai.chat")
+
+	// fMyProv represents our custom provider's chat format.
+	fMyProv = sdktr.Format("myprov.chat")
+)
+
+// init registers trivial translators for demonstration purposes.
+// In a real implementation, you would implement proper request/response
+// transformation logic between OpenAI format and your provider's format.
+func init() {
+	sdktr.Register(fOpenAI, fMyProv,
+		func(model string, raw []byte, stream bool) []byte { return raw },
+		sdktr.ResponseTransform{
+			Stream: func(ctx context.Context, model string, originalReq, translatedReq, raw []byte, param *any) []string {
+				return []string{string(raw)}
+			},
+			NonStream: func(ctx context.Context, model string, originalReq, translatedReq, raw []byte, param *any) string {
+				return string(raw)
+			},
+		},
+	)
+}
+
+// MyExecutor is a minimal provider implementation for demonstration purposes.
+// It implements the Executor interface to handle requests to a custom AI provider.
+type MyExecutor struct{}
+
+// Identifier returns the unique identifier for this executor.
+func (MyExecutor) Identifier() string { return providerKey }
+
+// PrepareRequest optionally injects credentials to raw HTTP requests.
+// This method is called before each request to allow the executor to modify
+// the HTTP request with authentication headers or other necessary modifications.
+//
+// Parameters:
+//   - req: The HTTP request to prepare
+//   - a: The authentication information
+//
+// Returns:
+//   - error: An error if request preparation fails
+func (MyExecutor) PrepareRequest(req *http.Request, a *coreauth.Auth) error {
+	if req == nil || a == nil {
+		return nil
+	}
+	if a.Attributes != nil {
+		if ak := strings.TrimSpace(a.Attributes["api_key"]); ak != "" {
+			req.Header.Set("Authorization", "Bearer "+ak)
+		}
+	}
+	return nil
+}
+
+func buildHTTPClient(a *coreauth.Auth) *http.Client {
+	if a == nil || strings.TrimSpace(a.ProxyURL) == "" {
+		return http.DefaultClient
+	}
+	u, err := url.Parse(a.ProxyURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return http.DefaultClient
+	}
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+}
+
+func upstreamEndpoint(a *coreauth.Auth) string {
+	if a != nil && a.Attributes != nil {
+		if ep := strings.TrimSpace(a.Attributes["endpoint"]); ep != "" {
+			return ep
+		}
+	}
+	// Demo echo endpoint; replace with your upstream.
+	return "https://httpbin.org/post"
+}
+
+func (MyExecutor) Execute(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (clipexec.Response, error) {
+	client := buildHTTPClient(a)
+	endpoint := upstreamEndpoint(a)
+
+	httpReq, errNew := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(req.Payload))
+	if errNew != nil {
+		return clipexec.Response{}, errNew
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// Inject credentials via PrepareRequest hook.
+	if errPrep := (MyExecutor{}).PrepareRequest(httpReq, a); errPrep != nil {
+		return clipexec.Response{}, errPrep
+	}
+
+	resp, errDo := client.Do(httpReq)
+	if errDo != nil {
+		return clipexec.Response{}, errDo
+	}
+	defer func() {
+		if errClose := resp.Body.Close(); errClose != nil {
+			fmt.Fprintf(os.Stderr, "close response body error: %v\n", errClose)
+		}
+	}()
+	body, _ := io.ReadAll(resp.Body)
+	return clipexec.Response{Payload: body}, nil
+}
+
+func (MyExecutor) HttpRequest(ctx context.Context, a *coreauth.Auth, req *http.Request) (*http.Response, error) {
+	if req == nil {
+		return nil, fmt.Errorf("myprov executor: request is nil")
+	}
+	if ctx == nil {
+		ctx = req.Context()
+	}
+	httpReq := req.WithContext(ctx)
+	if errPrep := (MyExecutor{}).PrepareRequest(httpReq, a); errPrep != nil {
+		return nil, errPrep
+	}
+	client := buildHTTPClient(a)
+	return client.Do(httpReq)
+}
+
+func (MyExecutor) CountTokens(context.Context, *coreauth.Auth, clipexec.Request, clipexec.Options) (clipexec.Response, error) {
+	return clipexec.Response{}, errors.New("count tokens not implemented")
+}
+
+func (MyExecutor) ExecuteStream(ctx context.Context, a *coreauth.Auth, req clipexec.Request, opts clipexec.Options) (*clipexec.StreamResult, error) {
+	ch := make(chan clipexec.StreamChunk, 1)
+	go func() {
+		defer close(ch)
+		ch <- clipexec.StreamChunk{Payload: []byte("data: {\"ok\":true}\n\n")}
+	}()
+	return &clipexec.StreamResult{Chunks: ch}, nil
+}
+
+func (MyExecutor) Refresh(ctx context.Context, a *coreauth.Auth) (*coreauth.Auth, error) {
+	return a, nil
+}
+
+func main() {
+	cfg, err := config.LoadConfig("config.yaml")
+	if err != nil {
+		panic(err)
+	}
+
+	tokenStore := sdkAuth.GetTokenStore()
+	if dirSetter, ok := tokenStore.(interface{ SetBaseDir(string) }); ok {
+		dirSetter.SetBaseDir(cfg.AuthDir)
+	}
+	core := coreauth.NewManager(tokenStore, nil, nil)
+	core.RegisterExecutor(MyExecutor{})
+
+	hooks := cliproxy.Hooks{
+		OnAfterStart: func(s *cliproxy.Service) {
+			// Register demo models for the custom provider so they appear in /v1/models.
+			models := []*cliproxy.ModelInfo{{ID: "myprov-pro-1", Object: "model", Type: providerKey, DisplayName: "MyProv Pro 1"}}
+			for _, a := range core.List() {
+				if strings.EqualFold(a.Provider, providerKey) {
+					clipproxy.GlobalModelRegistry().RegisterClient(a.ID, providerKey, models)
+				}
+			}
+		},
+	}
+
+	svc, err := cliproxy.NewBuilder().
+		WithConfig(cfg).
+		WithConfigPath("config.yaml").
+		WithCoreAuthManager(core).
+		WithServerOptions(
+			// Optional: add a simple middleware + custom request logger
+			api.WithMiddleware(func(c *gin.Context) { c.Header("X-Example", "custom-provider"); c.Next() }),
+			api.WithRequestLoggerFactory(func(cfg *config.Config, cfgPath string) logging.RequestLogger {
+				return logging.NewFileRequestLoggerWithOptions(true, "logs", filepath.Dir(cfgPath), cfg.ErrorLogsMaxFiles)
+			}),
+		).
+		WithHooks(hooks).
+		Build()
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if errRun := svc.Run(ctx); errRun != nil && !errors.Is(errRun, context.Canceled) {
+		panic(errRun)
+	}
+	_ = os.Stderr // keep os import used (demo only)
+	_ = time.Second
+}
+```
+
+## Key Concepts
+
+### 1. Executor Interface
+
+The `Executor` interface requires implementing several methods:
+
+- **`Identifier()`** - Returns a unique string identifier for your provider
+- **`PrepareRequest()`** - Injects authentication headers and credentials
+- **`Execute()`** - Handles non-streaming requests
+- **`ExecuteStream()`** - Handles streaming requests
+- **`HttpRequest()`** - Executes arbitrary HTTP requests with credentials
+- **`CountTokens()`** - Implements token counting (optional)
+- **`Refresh()`** - Refreshes authentication tokens (optional)
+
+### 2. Request/Response Translation
+
+The `init()` function registers translators that transform requests and responses between OpenAI format and your provider's format. In a production implementation, you would implement actual transformation logic here.
+
+### 3. Authentication
+
+Authentication is handled through the `Auth` struct with an `Attributes` map. The example uses an `api_key` attribute that gets injected as a Bearer token in the `PrepareRequest` method.
+
+### 4. Model Registration
+
+The `OnAfterStart` hook registers custom models that will appear in the `/v1/models` endpoint, making them discoverable by clients.
+
+### 5. Custom Middleware
+
+The example shows how to add custom middleware and request logging through the builder's `WithServerOptions` method.
+
+## How to Run
+
+1. Create a `config.yaml` file with your server configuration:
+
+```yaml
+server:
+  port: 8080
+  host: localhost
+auth_dir: ./auth
+```
+
+2. Run the example:
+
+```bash
+go run main.go
+```
+
+3. The server will start and register the custom "myprov" provider with the model "myprov-pro-1".
+
+## Configuration
+
+You can configure the custom provider through the `Auth.Attributes` map:
+
+- **`api_key`** - API key for authentication (injected as Bearer token)
+- **`endpoint`** - Custom upstream endpoint URL (defaults to httpbin.org in the example)
+
+## Related Documentation
+
+- [SDK Advanced](/sdk/advanced) - Detailed executor interface documentation
+- [SDK Advanced](/sdk/advanced) - Request/response translation guide
+- [SDK Overview](/sdk/overview) - Authentication system overview
+- [SDK Embedding](/sdk/embedding) - Service configuration and building

@@ -1,0 +1,277 @@
+---
+title: 'Google Gemini OAuth'
+description: 'Authenticate with Google Gemini using OAuth 2.0'
+---
+
+## Overview
+
+Google Gemini authentication allows you to access Google Cloud AI services including Gemini Code Assist and Google One AI features. The CLI Proxy API supports OAuth 2.0 authentication with automatic project setup and onboarding.
+
+## Prerequisites
+
+Before authenticating with Gemini, ensure you have:
+
+- A Google account with access to:
+  - Google Cloud Platform (GCP) projects for Code Assist, or
+  - Google One subscription for personal AI features
+- CLIProxyAPI server installed and configured
+- A web browser for OAuth authentication (or use `-no-browser` flag)
+
+## Authentication
+
+<Steps>
+  <Step title="Start the login process">
+    Run the following command to initiate Gemini OAuth:
+
+    ```bash
+    ./CLIProxyAPI -login
+    ```
+
+    This will:
+    - Open your default web browser automatically
+    - Navigate to Google's OAuth consent page
+    - Request permissions for Gemini API access
+  </Step>
+
+  <Step title="Complete OAuth authorization">
+    In the browser window:
+    1. Sign in with your Google account
+    2. Review the requested permissions
+    3. Click "Allow" to grant access
+    4. Wait for the callback to complete
+  </Step>
+
+  <Step title="Select login mode">
+    After OAuth completes, choose your login mode:
+
+    **Option 1: Code Assist (GCP project, manual selection)**
+    - Select a specific Google Cloud Platform project
+    - Required for enterprise/team usage
+    - Allows multiple project activation
+
+    **Option 2: Google One (personal account, auto-discover project)**
+    - Automatically discovers your Google One project
+    - Ideal for personal use
+    - No manual project selection needed
+  </Step>
+
+  <Step title="Select GCP project (Code Assist mode only)">
+    If using Code Assist mode, you'll see a list of available projects:
+
+    ```
+    Available Google Cloud projects:
+    [1] my-project-id-123 (My Project Name)
+    [2] another-project-456 (Another Project)
+    Type 'ALL' to onboard every listed project.
+
+    Enter project ID [my-project-id-123] or ALL:
+    ```
+
+    - Enter a project number (e.g., `1`)
+    - Enter a specific project ID
+    - Type `ALL` to activate all available projects
+    - Press Enter to use the default project
+  </Step>
+
+  <Step title="Wait for project activation">
+    The CLI will:
+    - Activate the selected project(s)
+    - Enable required Cloud AI APIs automatically
+    - Complete the onboarding process
+    - Save authentication tokens
+
+    You'll see confirmation messages:
+    ```
+    Activating project my-project-id-123
+    Onboarding complete. Using Project ID: my-project-id-123
+    Authentication saved to /path/to/auth/gemini-user@gmail.com-my-project-id-123.json
+    Gemini authentication successful!
+    ```
+  </Step>
+</Steps>
+
+## Advanced Options
+
+### Specify Project ID at Login
+
+You can specify a project ID directly during login to skip the selection prompt:
+
+```bash
+./CLIProxyAPI -login -project_id my-project-id-123
+```
+
+### Manual Browser Authentication
+
+If you're on a headless server or the browser doesn't open automatically:
+
+```bash
+./CLIProxyAPI -login -no-browser
+```
+
+The CLI will display:
+```
+Please visit this URL to authenticate:
+https://accounts.google.com/o/oauth2/auth?client_id=...
+```
+
+Open the URL manually in a browser on any device and complete the OAuth flow.
+
+### Custom OAuth Callback Port
+
+To use a specific port for the OAuth callback server:
+
+```bash
+./CLIProxyAPI -login -oauth-callback-port 8888
+```
+
+<Note>
+The default callback port is provider-specific. Use this flag if the default port is already in use.
+</Note>
+
+### Activate Multiple Projects
+
+To activate multiple projects in a single login session:
+
+1. Use the `-login` flag without `-project_id`
+2. When prompted, type `ALL` to activate all available projects
+3. Or specify comma-separated project IDs in your selection
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Set via `-auth-dir` or in config file
+- Filename format: `gemini-<email>-<project_id>.json`
+- Example: `gemini-user@gmail.com-my-project-123.json`
+
+### Token Contents
+
+The stored token file contains:
+- OAuth 2.0 access token and refresh token
+- Google account email address
+- Activated project ID(s)
+- Token expiration timestamps
+- Auto-discovery settings
+
+### Multiple Accounts
+
+You can authenticate with multiple Google accounts:
+1. Run `-login` for each account
+2. Each account creates a separate token file
+3. The server automatically manages credential rotation
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/gemini-*.json
+    ```
+
+    You should see your token file(s) listed.
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    The server will load your Gemini credentials automatically.
+  </Step>
+
+  <Step title="Make a test API request">
+    Send a request to test Gemini access:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "gemini-1.5-pro",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Browser doesn't open automatically
+
+**Solution:** Use the `-no-browser` flag and open the URL manually:
+```bash
+./CLIProxyAPI -login -no-browser
+```
+
+### "Project selection required" error
+
+**Cause:** Your account requires an explicit project ID.
+
+**Solution:** Specify a project ID during login:
+```bash
+./CLIProxyAPI -login -project_id your-project-id
+```
+
+### "Cloud AI API is not enabled" error
+
+**Cause:** Required Google Cloud APIs are not enabled for your project.
+
+**Solution:** The CLI attempts to enable APIs automatically. If it fails:
+1. Visit the [Google Cloud Console](https://console.cloud.google.com)
+2. Select your project
+3. Enable the "Gemini for Google Cloud API" (cloudaicompanion.googleapis.com)
+4. Run the login command again
+
+### OAuth callback timeout
+
+**Cause:** The OAuth callback server timed out waiting for authorization.
+
+**Solution:**
+- Complete the OAuth flow more quickly
+- Check if your firewall blocks the callback port
+- Use `-oauth-callback-port` to specify a different port
+
+### Token file not created
+
+**Cause:** Authentication completed but token save failed.
+
+**Solution:**
+- Verify the auth directory exists and is writable
+- Check filesystem permissions
+- Review error logs for specific failure reasons
+
+### "Backend vs Frontend Project ID" prompt
+
+**Cause:** Free tier users may receive a different backend project ID.
+
+**Solution:**
+- Choose **Backend (recommended)** for access to preview models
+- Backend project IDs support gemini-3-* and other preview features
+- Frontend IDs may have limited model access
+
+<Warning>
+Never share your token files! They contain credentials that provide full access to your Google Cloud AI services.
+</Warning>
+
+## Re-authentication
+
+Tokens are refreshed automatically. To re-authenticate manually:
+
+1. Delete the existing token file:
+   ```bash
+   rm /path/to/auth-dir/gemini-user@gmail.com-project.json
+   ```
+
+2. Run the login command again:
+   ```bash
+   ./CLIProxyAPI -login
+   ```
+
+## Related Resources
+
+- [Google Gemini API Documentation](https://ai.google.dev/docs)
+- [Google Cloud AI Platform](https://cloud.google.com/ai-platform)
+- [Configuration Guide](/configuration/server)

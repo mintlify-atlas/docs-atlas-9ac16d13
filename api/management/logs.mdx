@@ -1,0 +1,491 @@
+---
+title: Log Access Endpoints
+description: Access and manage server logs through the Management API
+---
+
+The log endpoints provide access to server logs, including main logs, request logs, and error logs.
+
+## Prerequisites
+
+Log endpoints require file logging to be enabled:
+
+```yaml
+logging-to-file: true
+```
+
+If file logging is disabled, log endpoints return an error.
+
+## Get Logs
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/logs`
+</ParamField>
+
+Returns log entries from the main log file with support for incremental loading.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  "http://localhost:8317/v0/management/logs?limit=100&after=1710172800"
+```
+
+### Query Parameters
+
+<ParamField query="limit" type="integer">
+  Maximum number of log lines to return (most recent)
+</ParamField>
+
+<ParamField query="after" type="integer">
+  Unix timestamp to filter logs after (for incremental loading)
+</ParamField>
+
+### Response
+
+<ResponseField name="lines" type="string[]">
+  Array of log lines
+</ResponseField>
+
+<ResponseField name="line-count" type="number">
+  Total number of lines processed
+</ResponseField>
+
+<ResponseField name="latest-timestamp" type="number">
+  Unix timestamp of the most recent log entry (use for next incremental request)
+</ResponseField>
+
+```json
+{
+  "lines": [
+    "[2026-03-11 10:30:45] INFO: Server started on :8317",
+    "[2026-03-11 10:30:46] INFO: Management API enabled",
+    "[2026-03-11 10:31:00] INFO: Request completed in 145ms"
+  ],
+  "line-count": 3,
+  "latest-timestamp": 1710172860
+}
+```
+
+## Delete Logs
+
+<ParamField path="DELETE" type="endpoint">
+  `/v0/management/logs`
+</ParamField>
+
+Clears all log files:
+- Truncates active log file (`main.log`)
+- Removes all rotated log files (`main.log.1`, `main-2026-03-11.log`, etc.)
+
+### Request
+
+```bash
+curl -X DELETE \
+  -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/logs
+```
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Whether deletion was successful
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Success message
+</ResponseField>
+
+<ResponseField name="removed" type="number">
+  Number of rotated log files removed
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "message": "Logs cleared successfully",
+  "removed": 5
+}
+```
+
+## Get Request Error Logs
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/request-error-logs`
+</ParamField>
+
+Lists error request log files created when `request-log` is disabled.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/request-error-logs
+```
+
+### Response
+
+<ResponseField name="files" type="object[]">
+  List of error log files
+  
+  <ResponseField name="name" type="string">
+    File name
+  </ResponseField>
+  
+  <ResponseField name="size" type="number">
+    File size in bytes
+  </ResponseField>
+  
+  <ResponseField name="modified" type="number">
+    Last modified timestamp (Unix)
+  </ResponseField>
+</ResponseField>
+
+```json
+{
+  "files": [
+    {
+      "name": "error-2026-03-11-10-30-45-req123.log",
+      "size": 2048,
+      "modified": 1710172845
+    },
+    {
+      "name": "error-2026-03-11-10-25-30-req122.log",
+      "size": 1536,
+      "modified": 1710172530
+    }
+  ]
+}
+```
+
+<Note>
+  When `request-log: true`, this endpoint returns an empty array since all requests are logged to the main log file.
+</Note>
+
+## Download Error Log by Name
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/request-error-logs/:name`
+</ParamField>
+
+Downloads a specific error log file.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  -O -J \
+  http://localhost:8317/v0/management/request-error-logs/error-2026-03-11-10-30-45-req123.log
+```
+
+### Response
+
+File download with `Content-Disposition: attachment`.
+
+## Get Request Log by ID
+
+<ParamField path="GET" type="endpoint">
+  `/v0/management/request-log-by-id/:id`
+</ParamField>
+
+Finds and downloads a request log file by its request ID.
+
+### Request
+
+```bash
+curl -H "X-Management-Key: YOUR_SECRET" \
+  -O -J \
+  http://localhost:8317/v0/management/request-log-by-id/req123
+```
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  Request ID to search for (matches log file suffix `*-{id}.log`)
+</ParamField>
+
+### Response
+
+File download with the matched log file.
+
+### Error Responses
+
+```json
+{
+  "error": "log file not found for the given request ID"
+}
+```
+
+## Log File Formats
+
+### Main Log Format
+
+```
+[2026-03-11 10:30:45] INFO: Server started on :8317
+[2026-03-11 10:30:46] DEBUG: Loading configuration from config.yaml
+[2026-03-11 10:31:00] INFO: Request completed in 145ms
+[2026-03-11 10:31:15] ERROR: Authentication failed for key abc123
+```
+
+Each line starts with:
+- Timestamp: `[YYYY-MM-DD HH:MM:SS]`
+- Level: `INFO`, `DEBUG`, `WARN`, `ERROR`
+- Message
+
+### Error Log File Naming
+
+Error logs use the format:
+```
+error-{timestamp}-{requestID}.log
+```
+
+Example: `error-2026-03-11-10-30-45-req123.log`
+
+### Rotated Log File Naming
+
+Two rotation formats are supported:
+
+**Numeric rotation**:
+```
+main.log      # Active log
+main.log.1    # Most recent rotation
+main.log.2    # Second most recent
+```
+
+**Timestamp rotation**:
+```
+main.log                      # Active log
+main-2026-03-11T10-30-45.log  # Rotation at specific time
+main-2026-03-11T09-15-30.log.gz  # Compressed rotation
+```
+
+## Incremental Log Loading
+
+Use the `after` parameter with `latest-timestamp` for efficient polling:
+
+```bash
+# Initial request
+curl -H "X-Management-Key: YOUR_SECRET" \
+  "http://localhost:8317/v0/management/logs?limit=100" > logs1.json
+
+# Extract latest timestamp
+LATEST=$(jq -r '."latest-timestamp"' logs1.json)
+
+# Get only new logs
+curl -H "X-Management-Key: YOUR_SECRET" \
+  "http://localhost:8317/v0/management/logs?limit=100&after=$LATEST" > logs2.json
+```
+
+### How It Works
+
+1. First request returns last 100 lines with `latest-timestamp: 1710172860`
+2. Second request with `after=1710172860` returns only lines newer than that timestamp
+3. Continue polling with the latest timestamp for incremental updates
+
+## Log Configuration Endpoints
+
+### Get Request Log Setting
+
+```bash
+GET /v0/management/request-log
+```
+
+```json
+{
+  "request-log": false
+}
+```
+
+### Enable Request Logging
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/request-log
+```
+
+### Get Logging to File Setting
+
+```bash
+GET /v0/management/logging-to-file
+```
+
+```json
+{
+  "logging-to-file": true
+}
+```
+
+### Enable File Logging
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": true}' \
+  http://localhost:8317/v0/management/logging-to-file
+```
+
+## Log Rotation Settings
+
+### Get Max Total Size
+
+```bash
+GET /v0/management/logs-max-total-size-mb
+```
+
+```json
+{
+  "logs-max-total-size-mb": 100
+}
+```
+
+### Set Max Total Size
+
+Set maximum total size for all log files in MB (0 = unlimited):
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": 500}' \
+  http://localhost:8317/v0/management/logs-max-total-size-mb
+```
+
+### Get Max Error Log Files
+
+```bash
+GET /v0/management/error-logs-max-files
+```
+
+```json
+{
+  "error-logs-max-files": 10
+}
+```
+
+### Set Max Error Log Files
+
+Set maximum number of error log files to retain:
+
+```bash
+curl -X PUT \
+  -H "X-Management-Key: YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"value": 20}' \
+  http://localhost:8317/v0/management/error-logs-max-files
+```
+
+## Complete Logging Configuration
+
+```yaml
+# Enable logging to files
+logging-to-file: true
+
+# Enable request logging (logs all requests)
+request-log: false
+
+# Maximum total log size in MB (0 = unlimited)
+logs-max-total-size-mb: 100
+
+# Maximum error log files to keep (when request-log is false)
+error-logs-max-files: 10
+```
+
+## Error Responses
+
+### Logging Disabled
+
+```json
+{
+  "error": "logging to file disabled"
+}
+```
+
+Returned when `logging-to-file: false`.
+
+### Log Directory Not Configured
+
+```json
+{
+  "error": "log directory not configured"
+}
+```
+
+### Log File Not Found
+
+```json
+{
+  "error": "log file not found"
+}
+```
+
+### Invalid Request ID
+
+```json
+{
+  "error": "invalid request ID"
+}
+```
+
+Returned when request ID contains path separators.
+
+## Log Directory Location
+
+Logs are written to:
+
+1. Directory specified in log configuration (if set)
+2. `./logs/` directory relative to server working directory (default)
+
+The management handler automatically detects the log directory based on the server configuration.
+
+## Use Cases
+
+### Real-time Log Monitoring
+
+```bash
+#!/bin/bash
+LATEST=0
+
+while true; do
+  RESPONSE=$(curl -s -H "X-Management-Key: YOUR_SECRET" \
+    "http://localhost:8317/v0/management/logs?limit=50&after=$LATEST")
+  
+  LINES=$(echo "$RESPONSE" | jq -r '.lines[]')
+  if [ -n "$LINES" ]; then
+    echo "$LINES"
+  fi
+  
+  LATEST=$(echo "$RESPONSE" | jq -r '."latest-timestamp"')
+  sleep 5
+done
+```
+
+### Download All Error Logs
+
+```bash
+#!/bin/bash
+FILES=$(curl -s -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/request-error-logs | jq -r '.files[].name')
+
+for FILE in $FILES; do
+  curl -H "X-Management-Key: YOUR_SECRET" \
+    -O -J \
+    "http://localhost:8317/v0/management/request-error-logs/$FILE"
+done
+```
+
+### Clear Old Logs
+
+```bash
+# Clear all logs
+curl -X DELETE \
+  -H "X-Management-Key: YOUR_SECRET" \
+  http://localhost:8317/v0/management/logs
+```
+
+## Next Steps
+
+- [Configuration Endpoints](/api/management/config) - Configure logging settings
+- [OAuth Endpoints](/api/management/oauth) - Monitor OAuth authentication events
+- [Quota Endpoints](/api/management/quota) - Track quota exceeded events

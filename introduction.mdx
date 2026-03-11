@@ -1,0 +1,180 @@
+---
+title: Introduction
+description: A proxy server that provides OpenAI/Gemini/Claude/Codex compatible API interfaces for CLI models with OAuth support and multi-account load balancing
+---
+
+# Welcome to CLI Proxy API
+
+CLI Proxy API is a powerful proxy server that bridges the gap between CLI-based AI models and standard AI API interfaces. It provides OpenAI, Gemini, Claude, and Codex compatible endpoints, allowing you to use your existing CLI subscriptions with any tool or library designed for these APIs.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes with our quick start guide
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install and configure CLI Proxy API on your system
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Go SDK" icon="golang" href="/sdk/overview">
+    Embed the proxy in your Go applications
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Provider OAuth" icon="shield-check">
+    Authenticate with Gemini, Claude, OpenAI Codex, Qwen, iFlow, and Antigravity using OAuth flows
+  </Card>
+  <Card title="Load Balancing" icon="scale-balanced">
+    Distribute requests across multiple accounts with round-robin or fill-first strategies
+  </Card>
+  <Card title="Model Aliasing" icon="tag">
+    Create custom model names and map unavailable models to alternatives
+  </Card>
+  <Card title="Streaming Support" icon="water">
+    Full support for streaming and non-streaming responses with function calling
+  </Card>
+  <Card title="Management API" icon="gear">
+    Runtime configuration, quota monitoring, and log access via REST endpoints
+  </Card>
+  <Card title="Go SDK" icon="code-branch">
+    Reusable library for embedding the proxy in your own applications
+  </Card>
+</CardGroup>
+
+## Use Cases
+
+### CLI Subscriptions with Any Client
+
+Use your Gemini CLI, Claude Code, or OpenAI Codex subscriptions with tools like Cursor, Cline, Continue, or any OpenAI-compatible client.
+
+```bash
+# Start the proxy
+./cliproxyapi
+
+# Use with any OpenAI-compatible client
+curl http://localhost:8317/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### Multi-Account Management
+
+Automatically distribute load across multiple accounts to maximize throughput and avoid rate limits.
+
+```yaml
+# config.yaml - Round-robin across three Gemini accounts
+routing:
+  strategy: "round-robin"
+
+# Authentication files managed in ~/.cli-proxy-api/
+# - gemini_account1.json
+# - gemini_account2.json  
+# - gemini_account3.json
+```
+
+### Custom Model Routing
+
+Map model names to different providers or create aliases for your workflow.
+
+```yaml
+# Route unavailable models to alternatives
+ampcode:
+  model-mappings:
+    - from: "claude-opus-4-5-20251101"
+      to: "gemini-2.5-pro"
+    - from: "gpt-5"
+      to: "claude-sonnet-4"
+```
+
+## Architecture
+
+CLI Proxy API acts as a translation layer between standard AI API formats (OpenAI, Claude, Gemini) and CLI-based authentication:
+
+```
+┌─────────────────┐
+│  Your Client    │  (Cursor, Cline, custom app)
+└────────┬────────┘
+         │ OpenAI-compatible API
+         ▼
+┌─────────────────┐
+│ CLI Proxy API   │  Translation & Routing
+└────────┬────────┘
+         │
+    ┌────┴────┬────────┬────────┐
+    ▼         ▼        ▼        ▼
+  Gemini   Claude   Codex    Qwen
+   (CLI)   (OAuth)  (OAuth)  (OAuth)
+```
+
+The proxy handles:
+- **Authentication**: OAuth flows, token refresh, multi-account management
+- **Translation**: Request/response format conversion between API standards
+- **Routing**: Load balancing, model aliasing, automatic failover
+- **Management**: Configuration hot-reload, quota tracking, logging
+
+## Supported Providers
+
+<AccordionGroup>
+  <Accordion title="Google Gemini">
+    - Gemini CLI (via OAuth)
+    - AI Studio API keys
+    - Vertex AI (service accounts and API keys)
+    - Antigravity (OAuth)
+  </Accordion>
+  
+  <Accordion title="Anthropic Claude">
+    - Claude Code (via OAuth)
+    - Official Claude API keys
+    - Custom Claude-compatible endpoints
+  </Accordion>
+  
+  <Accordion title="OpenAI Codex">
+    - OpenAI Codex (via OAuth)
+    - Device code flow support
+    - Custom OpenAI-compatible endpoints
+  </Accordion>
+  
+  <Accordion title="Other Providers">
+    - Qwen Code (via OAuth)
+    - iFlow (via OAuth and Cookie)
+    - Kimi (via OAuth)
+    - Any OpenAI-compatible provider (OpenRouter, etc.)
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="play" href="/quickstart">
+    Follow our step-by-step tutorial to get started in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand authentication, providers, and routing strategies
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/server">
+    Learn how to configure the proxy for your needs
+  </Card>
+  <Card title="OAuth Setup" icon="key" href="/oauth/gemini">
+    Authenticate with your provider accounts
+  </Card>
+</CardGroup>
+
+## Community & Support
+
+CLI Proxy API is open source and licensed under MIT. Join our growing community:
+
+- **GitHub**: [router-for-me/CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+- **Issues**: Report bugs or request features on GitHub
+- **Stars**: 15,500+ developers trust CLI Proxy API
+
+<Note>
+  CLI Proxy API is actively maintained and regularly updated with support for new providers and features. Check the GitHub repository for the latest releases and updates.
+</Note>

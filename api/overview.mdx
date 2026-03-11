@@ -1,0 +1,259 @@
+---
+title: 'API Overview'
+description: 'Learn about the CLI Proxy API structure, versioning, and available endpoints'
+---
+
+## Introduction
+
+The CLI Proxy API provides a unified interface for accessing multiple AI model providers through OpenAI-compatible, Claude-compatible, and Gemini-compatible endpoints. The API supports both streaming and non-streaming responses, request authentication, and dynamic model routing.
+
+## Base URL
+
+The API server runs on a configurable host and port. The default configuration is:
+
+```bash
+http://localhost:8317
+```
+
+You can customize the host and port in your `config.yaml`:
+
+```yaml config.yaml
+host: ""  # Empty string binds to all interfaces (IPv4 + IPv6)
+port: 8317
+```
+
+<Note>
+To restrict access to localhost only, set `host: "127.0.0.1"` or `host: "localhost"`
+</Note>
+
+## HTTPS/TLS Support
+
+The API supports HTTPS with TLS certificates:
+
+```yaml config.yaml
+tls:
+  enable: true
+  cert: "/path/to/cert.pem"
+  key: "/path/to/key.pem"
+```
+
+When TLS is enabled, the base URL becomes:
+
+```bash
+https://localhost:8317
+```
+
+## API Versioning
+
+The CLI Proxy API uses URL path versioning with multiple API versions:
+
+### OpenAI-Compatible API (v1)
+
+All OpenAI-compatible endpoints are prefixed with `/v1`:
+
+```
+POST /v1/chat/completions
+POST /v1/completions
+GET  /v1/models
+POST /v1/messages
+POST /v1/messages/count_tokens
+GET  /v1/responses
+POST /v1/responses
+POST /v1/responses/compact
+```
+
+### Gemini-Compatible API (v1beta)
+
+Gemini-compatible endpoints use the `/v1beta` prefix:
+
+```
+GET  /v1beta/models
+POST /v1beta/models/{model}:generateContent
+POST /v1beta/models/{model}:streamGenerateContent
+POST /v1beta/models/{model}:countTokens
+GET  /v1beta/models/{model}
+```
+
+### Management API (v0)
+
+Management and administrative endpoints use `/v0/management`:
+
+```
+GET  /v0/management/usage
+GET  /v0/management/config
+PUT  /v0/management/config.yaml
+GET  /v0/management/api-keys
+POST /v0/management/api-call
+```
+
+<Note>
+Management API endpoints require authentication with a secret key. See the [Authentication](/api/authentication) page for details.
+</Note>
+
+## Endpoint Categories
+
+The API is organized into the following functional categories:
+
+### 1. Chat & Completions
+
+**OpenAI Format**
+- `POST /v1/chat/completions` - OpenAI-compatible chat completions
+- `POST /v1/completions` - OpenAI-compatible text completions
+- `POST /v1/responses` - OpenAI Responses API format
+- `POST /v1/responses/compact` - Compact response format
+- `GET /v1/responses` - WebSocket for Responses API
+
+**Claude Format**
+- `POST /v1/messages` - Claude-compatible message API
+- `POST /v1/messages/count_tokens` - Count tokens for Claude requests
+
+**Gemini Format**
+- `POST /v1beta/models/{model}:generateContent` - Generate content (non-streaming)
+- `POST /v1beta/models/{model}:streamGenerateContent` - Generate content (streaming)
+- `POST /v1beta/models/{model}:countTokens` - Count tokens
+
+### 2. Model Listing
+
+- `GET /v1/models` - List OpenAI-compatible models (routes based on User-Agent)
+- `GET /v1beta/models` - List all Gemini-compatible models
+- `GET /v1beta/models/{model}` - Get specific model information
+
+### 3. OAuth Callbacks
+
+OAuth provider callback endpoints for authentication flows:
+
+- `GET /anthropic/callback` - Claude/Anthropic OAuth callback
+- `GET /codex/callback` - Codex OAuth callback
+- `GET /google/callback` - Google/Gemini OAuth callback
+- `GET /iflow/callback` - iFlow OAuth callback
+- `GET /antigravity/callback` - Antigravity OAuth callback
+
+### 4. Management & Configuration
+
+Comprehensive management endpoints at `/v0/management/*`:
+
+- **Usage & Statistics**: Get usage data, export/import statistics
+- **Configuration**: View and update server configuration
+- **API Keys**: Manage API keys for various providers
+- **Logs**: Access request logs and error logs
+- **Authentication**: OAuth flows and credential management
+
+### 5. Control Panel
+
+- `GET /management.html` - Web-based management control panel
+
+## Response Formats
+
+The API supports multiple response formats:
+
+### JSON Responses
+
+All non-streaming endpoints return JSON:
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1699999999,
+  "model": "gemini-2.5-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I help you?"
+      },
+      "finish_reason": "stop"
+    }
+  ]
+}
+```
+
+### Server-Sent Events (SSE)
+
+Streaming endpoints use Server-Sent Events:
+
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk",...}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk",...}
+
+data: [DONE]
+```
+
+### WebSocket
+
+The Responses API also supports WebSocket connections:
+
+```
+GET /v1/responses
+Upgrade: websocket
+Connection: Upgrade
+```
+
+## Error Responses
+
+All error responses follow this format:
+
+```json
+{
+  "error": {
+    "message": "Invalid API key provided",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key"
+  }
+}
+```
+
+Common HTTP status codes:
+
+- `400 Bad Request` - Invalid request parameters
+- `401 Unauthorized` - Missing or invalid API key
+- `404 Not Found` - Endpoint or resource not found
+- `429 Too Many Requests` - Rate limit exceeded
+- `500 Internal Server Error` - Server error
+- `502 Bad Gateway` - Upstream service error
+- `503 Service Unavailable` - Service temporarily unavailable
+
+## CORS Support
+
+The API includes CORS headers on all responses:
+
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS
+Access-Control-Allow-Headers: *
+```
+
+## Rate Limiting & Retries
+
+The API includes built-in retry logic for failed requests:
+
+```yaml config.yaml
+request-retry: 3  # Number of retries
+max-retry-interval: 30  # Max wait time in seconds
+max-retry-credentials: 0  # Max credentials to try (0 = try all)
+```
+
+Retries occur for HTTP status codes: 403, 408, 500, 502, 503, 504
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    Learn how to authenticate API requests
+  </Card>
+  <Card title="Chat Completions" icon="message" href="/api/openai/chat">
+    Make OpenAI-compatible chat requests
+  </Card>
+  <Card title="Gemini API" icon="sparkles" href="/api/overview">
+    Use Gemini-compatible endpoints
+  </Card>
+  <Card title="Management API" icon="gear" href="/api/management/overview">
+    Configure and manage the API server
+  </Card>
+</CardGroup>

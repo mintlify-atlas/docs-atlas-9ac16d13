@@ -1,0 +1,297 @@
+---
+title: 'Claude OAuth'
+description: 'Authenticate with Anthropic Claude using OAuth 2.0'
+---
+
+## Overview
+
+Claude authentication enables access to Anthropic's Claude AI models through OAuth 2.0. The CLI Proxy API handles the complete OAuth flow, including PKCE (Proof Key for Code Exchange) for enhanced security.
+
+## Prerequisites
+
+Before authenticating with Claude, ensure you have:
+
+- A Claude account (personal or professional)
+- CLIProxyAPI server installed and configured
+- A web browser for OAuth authentication (or use `-no-browser` flag)
+- Network access to Anthropic's authentication servers
+
+## Authentication
+
+<Steps>
+  <Step title="Start the login process">
+    Run the following command to initiate Claude OAuth:
+
+    ```bash
+    ./CLIProxyAPI -claude-login
+    ```
+
+    This will:
+    - Start a local OAuth callback server
+    - Generate PKCE challenge and verifier
+    - Open your default web browser automatically
+    - Navigate to Claude's OAuth authorization page
+  </Step>
+
+  <Step title="Complete OAuth authorization">
+    In the browser window:
+    1. Sign in to your Claude account
+    2. Review the requested permissions
+    3. Click "Authorize" to grant access to the CLI Proxy API
+    4. Wait for the redirect back to the local callback server
+  </Step>
+
+  <Step title="Confirmation">
+    After successful authorization, you'll see:
+
+    ```
+    Authentication saved to /path/to/auth/claude-<identifier>.json
+    Claude authentication successful!
+    ```
+
+    The CLI will automatically:
+    - Exchange the authorization code for access tokens
+    - Save tokens to the configured auth directory
+    - Close the callback server
+  </Step>
+</Steps>
+
+## Advanced Options
+
+### Manual Browser Authentication
+
+If you're on a headless server or the browser doesn't open automatically:
+
+```bash
+./CLIProxyAPI -claude-login -no-browser
+```
+
+The CLI will display:
+```
+Please visit this URL to authenticate:
+https://claude.ai/oauth/authorize?client_id=...
+```
+
+Copy and paste the URL into a browser on any device, complete the OAuth flow, and the callback will redirect back to your local server.
+
+### Custom OAuth Callback Port
+
+To use a specific port for the OAuth callback server:
+
+```bash
+./CLIProxyAPI -claude-login -oauth-callback-port 9000
+```
+
+<Note>
+The default callback port is Claude-specific. Use this flag if the default port is already in use or blocked by your firewall.
+</Note>
+
+### Combined Options
+
+You can combine flags for specific scenarios:
+
+```bash
+# Headless server with custom port
+./CLIProxyAPI -claude-login -no-browser -oauth-callback-port 8888
+```
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Configured via `-auth-dir` flag or in config file
+- Filename format: `claude-<identifier>-<timestamp>.json`
+- Example: `claude-user-1234567890.json`
+
+### Token Contents
+
+The stored token file contains:
+- OAuth 2.0 access token
+- Refresh token (if provided)
+- Token type and expiration timestamp
+- Account identifier
+- PKCE parameters (stored securely)
+
+### Multiple Accounts
+
+You can authenticate with multiple Claude accounts:
+
+1. Run `-claude-login` for each account
+2. Each account creates a separate token file
+3. The server automatically manages credential rotation and load balancing
+
+<Tip>
+Multiple accounts are useful for:
+- Increased rate limits through credential rotation
+- Separating personal and team usage
+- Testing different subscription tiers
+</Tip>
+
+## Security Features
+
+### PKCE (Proof Key for Code Exchange)
+
+The Claude OAuth implementation uses PKCE to prevent authorization code interception:
+
+- A cryptographically random code verifier is generated
+- The SHA-256 hash is sent as the code challenge
+- The original verifier is used during token exchange
+- This prevents man-in-the-middle attacks
+
+### Secure Token Storage
+
+Tokens are stored with appropriate file permissions:
+- Files are created with `0600` permissions (owner read/write only)
+- Tokens are never logged or displayed in plaintext
+- Refresh tokens enable automatic token renewal
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/claude-*.json
+    ```
+
+    You should see your token file(s) listed.
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    The server will:
+    - Automatically discover Claude token files
+    - Load credentials into the credential pool
+    - Log successful credential registration
+  </Step>
+
+  <Step title="Make a test API request">
+    Send a request to test Claude access:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "claude-3-5-sonnet-20241022",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Port already in use error
+
+**Cause:** The OAuth callback port is already occupied by another service.
+
+**Solution:** Use a custom callback port:
+```bash
+./CLIProxyAPI -claude-login -oauth-callback-port 9001
+```
+
+<Warning>
+If you see error code indicating port conflicts, the CLI will exit with a specific error code. Choose a different port and try again.
+</Warning>
+
+### Browser doesn't open automatically
+
+**Solution:** Use the `-no-browser` flag:
+```bash
+./CLIProxyAPI -claude-login -no-browser
+```
+
+Then manually open the displayed URL in your browser.
+
+### OAuth callback timeout
+
+**Cause:** The authorization wasn't completed within the timeout period.
+
+**Solution:**
+- Complete the OAuth flow more quickly
+- Check if your firewall blocks the callback port
+- Ensure localhost/127.0.0.1 is accessible
+- Try a different callback port with `-oauth-callback-port`
+
+### "Authentication failed" error
+
+**Possible causes:**
+- Invalid authorization code
+- PKCE verification failed
+- Network connectivity issues
+- Claude service outage
+
+**Solution:**
+1. Check your network connection
+2. Verify Claude services are operational
+3. Try authenticating again
+4. Check the server logs for detailed error messages
+
+### Token not saving
+
+**Cause:** Permission issues with the auth directory.
+
+**Solution:**
+- Verify the auth directory exists: `mkdir -p /path/to/auth-dir`
+- Check directory permissions: `chmod 755 /path/to/auth-dir`
+- Ensure sufficient disk space
+- Review error logs for specific failure reasons
+
+### Invalid redirect URI error
+
+**Cause:** The callback port in the OAuth request doesn't match the actual server port.
+
+**Solution:**
+- Don't manually modify the OAuth URL
+- Ensure no network proxies are modifying requests
+- Use the `-oauth-callback-port` flag if needed
+
+## Token Refresh
+
+Claude tokens are automatically refreshed:
+
+- The server monitors token expiration
+- Refresh tokens are used to obtain new access tokens
+- Refreshed tokens are saved back to the auth directory
+- No manual intervention required
+
+## Re-authentication
+
+To re-authenticate with a Claude account:
+
+1. Delete the existing token file:
+   ```bash
+   rm /path/to/auth-dir/claude-*.json
+   ```
+
+2. Run the login command again:
+   ```bash
+   ./CLIProxyAPI -claude-login
+   ```
+
+<Tip>
+Re-authentication may be necessary if:
+- Tokens are revoked
+- You change Claude subscription tiers
+- You want to update permissions
+</Tip>
+
+## Security Best Practices
+
+- **Never share token files** - They contain credentials with full account access
+- **Use restrictive permissions** - Keep auth directory at `755` and token files at `600`
+- **Rotate credentials regularly** - Re-authenticate periodically for security
+- **Monitor token usage** - Check logs for unauthorized access attempts
+- **Secure your auth directory** - Back up tokens securely, encrypt if storing remotely
+
+## Related Resources
+
+- [Anthropic Claude API Documentation](https://docs.anthropic.com/)
+- [OAuth 2.0 with PKCE Specification](https://oauth.net/2/pkce/)
+- [Configuration Guide](/configuration/server)

@@ -1,0 +1,527 @@
+---
+title: 'iFlow Authentication'
+description: 'Authenticate with iFlow using OAuth 2.0 or cookie-based authentication'
+---
+
+## Overview
+
+iFlow authentication provides access to iFlow's AI services through two methods:
+
+1. **OAuth 2.0 Flow** - Standard OAuth authentication with browser
+2. **Cookie Authentication** - Direct authentication using browser cookies
+
+Both methods require an email address for account identification and token file naming.
+
+## Prerequisites
+
+Before authenticating with iFlow, ensure you have:
+
+- An iFlow account with API access
+- CLIProxyAPI server installed and configured
+- Email address associated with your iFlow account
+- For OAuth: A web browser
+- For cookie auth: Browser cookies from an active iFlow session
+
+## Authentication Method 1: OAuth Flow
+
+The OAuth flow provides standard browser-based authentication.
+
+<Steps>
+  <Step title="Start OAuth login">
+    Run the following command:
+
+    ```bash
+    ./CLIProxyAPI -iflow-login
+    ```
+
+    This will:
+    - Start a local OAuth callback server
+    - Open your default web browser
+    - Navigate to iFlow's OAuth authorization page
+  </Step>
+
+  <Step title="Complete authorization">
+    In the browser:
+    1. Sign in to your iFlow account
+    2. Review the requested permissions
+    3. Click "Authorize" to grant access
+    4. Wait for automatic redirect to callback
+  </Step>
+
+  <Step title="Provide email address">
+    When prompted, enter your iFlow account email:
+
+    ```
+    Enter your email address:
+    user@example.com
+    ```
+
+    This email is required for account identification.
+  </Step>
+
+  <Step title="Confirmation">
+    After successful authorization:
+
+    ```
+    Authentication saved to /path/to/auth/iflow-<email>-<timestamp>.json
+    iFlow authentication successful!
+    ```
+  </Step>
+</Steps>
+
+### OAuth Flow Options
+
+#### Manual Browser Mode
+
+For headless servers or when the browser doesn't open:
+
+```bash
+./CLIProxyAPI -iflow-login -no-browser
+```
+
+The CLI displays the authorization URL for manual opening.
+
+#### Custom Callback Port
+
+```bash
+./CLIProxyAPI -iflow-login -oauth-callback-port 9000
+```
+
+<Note>
+iFlow OAuth authentication requires an email address. If you don't provide one when prompted, authentication will fail with an "EmailRequiredError".
+</Note>
+
+## Authentication Method 2: Cookie Authentication
+
+Cookie authentication allows you to use existing browser session cookies for quick setup.
+
+<Steps>
+  <Step title="Get iFlow cookies from browser">
+    Open your browser and sign in to iFlow. Then extract cookies:
+
+    **Chrome/Edge:**
+    1. Open DevTools (F12)
+    2. Go to Application → Cookies
+    3. Find iFlow's domain
+    4. Copy all cookie values
+
+    **Firefox:**
+    1. Open DevTools (F12)
+    2. Go to Storage → Cookies
+    3. Find iFlow's domain
+    4. Copy cookie values
+
+    Look for important cookies like:
+    - `BXAuth` or similar session identifiers
+    - Authentication tokens
+    - Session IDs
+  </Step>
+
+  <Step title="Start cookie authentication">
+    Run the cookie authentication command:
+
+    ```bash
+    ./CLIProxyAPI -iflow-cookie
+    ```
+  </Step>
+
+  <Step title="Paste cookies">
+    When prompted, paste your cookies:
+
+    ```
+    Enter iFlow Cookie (from browser cookies):
+    BXAuth=value1; SessionID=value2; Token=value3
+    ```
+
+    The CLI automatically:
+    - Normalizes cookie format
+    - Extracts BXAuth identifier
+    - Validates cookie structure
+  </Step>
+
+  <Step title="Check for duplicates">
+    The CLI checks if this BXAuth already exists:
+    - If duplicate found: Authentication is skipped
+    - If unique: Proceeds with authentication
+
+    ```
+    Duplicate BXAuth found, authentication already exists: iflow-user@example.com-123456.json
+    ```
+  </Step>
+
+  <Step title="Authenticate and save">
+    If cookies are valid, the CLI:
+    - Authenticates with iFlow servers
+    - Retrieves API key and expiration
+    - Saves token to auth directory
+
+    ```
+    Authentication successful! API key: iflow-key-xxxxx
+    Expires at: 2026-12-31T23:59:59Z
+    Authentication saved to: /path/to/auth/iflow-user@example.com-123456.json
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+Cookie authentication requires active browser cookies. Cookies expire when:
+- You sign out of iFlow
+- The session timeout is reached
+- Cookies are cleared from your browser
+
+You'll need to re-authenticate when cookies expire.
+</Warning>
+
+## Comparison: OAuth vs Cookie Authentication
+
+| Feature | OAuth Flow | Cookie Authentication |
+|---------|------------|-----------------------|
+| Browser required | Yes (OAuth flow) | Yes (to get cookies) |
+| Setup speed | Moderate | Fast |
+| Expiration handling | Automatic refresh | Manual re-auth needed |
+| Security | OAuth 2.0 standard | Depends on cookie security |
+| Best for | Long-term use | Quick testing/setup |
+| Duplicate detection | No | Yes (by BXAuth) |
+
+<Tip>
+**Recommendation:**
+- Use **OAuth flow** (`-iflow-login`) for production and long-term usage
+- Use **cookie auth** (`-iflow-cookie`) for quick testing or when OAuth isn't working
+</Tip>
+
+## Configuration
+
+### Token Storage Location
+
+Authentication tokens are stored in the configured auth directory:
+
+- Default location: Set via `-auth-dir` or in config file
+- Filename format: `iflow-<email>-<timestamp>.json`
+- Example: `iflow-user@example.com-1234567890.json`
+
+### Token Contents
+
+**OAuth tokens contain:**
+- OAuth 2.0 access token
+- Refresh token (if provided)
+- Token expiration
+- Email address
+- Authentication metadata
+
+**Cookie tokens contain:**
+- API key extracted from session
+- BXAuth identifier
+- Cookie expiration
+- Email address
+- Original cookie values (normalized)
+
+### Email Address Requirements
+
+The email address you provide:
+
+- **Must match** your iFlow account email
+- **Is required** for both OAuth and cookie authentication
+- **Is used** for token file naming and organization
+- **Identifies** your account in logs and monitoring
+
+### Multiple Accounts
+
+Authenticate with multiple iFlow accounts for increased capacity:
+
+```bash
+# OAuth method - Account 1
+./CLIProxyAPI -iflow-login
+
+# Cookie method - Account 2
+./CLIProxyAPI -iflow-cookie
+
+# OAuth method - Account 3
+./CLIProxyAPI -iflow-login
+```
+
+Each account:
+- Creates a separate token file
+- Has its own API key/tokens
+- Is automatically loaded by the server
+- Participates in credential rotation
+
+## Verification
+
+To verify your authentication is working:
+
+<Steps>
+  <Step title="Check token file exists">
+    ```bash
+    ls -la /path/to/auth-dir/iflow-*.json
+    ```
+
+    You should see your iFlow token file(s).
+  </Step>
+
+  <Step title="Verify token contents">
+    For cookie authentication, check the API key was saved:
+    ```bash
+    cat /path/to/auth-dir/iflow-*.json | grep -o '"api_key":"[^"]*"'
+    ```
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    ./CLIProxyAPI
+    ```
+
+    Watch for log messages indicating iFlow credentials were loaded.
+  </Step>
+
+  <Step title="Make a test request">
+    Test iFlow access:
+
+    ```bash
+    curl http://localhost:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "iflow-model",
+        "messages": [{"role": "user", "content": "Hello!"}]
+      }'
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### OAuth Flow Issues
+
+#### Email required error
+
+**Cause:** No email address provided when prompted.
+
+**Solution:**
+1. Run the login command again
+2. Enter your iFlow account email when prompted
+3. Complete the OAuth flow
+
+#### Browser doesn't open
+
+**Solution:** Use manual browser mode:
+```bash
+./CLIProxyAPI -iflow-login -no-browser
+```
+
+#### OAuth timeout
+
+**Cause:** Authorization not completed quickly enough.
+
+**Solution:**
+- Complete OAuth flow faster
+- Check firewall settings
+- Verify callback port is accessible
+
+### Cookie Authentication Issues
+
+#### Invalid cookie format
+
+**Cause:** Cookies not properly formatted.
+
+**Solution:**
+- Ensure cookies are in `name=value; name2=value2` format
+- Copy all relevant cookies from browser
+- Don't modify cookie values manually
+- Check for line breaks or extra spaces
+
+#### Cookie normalization failed
+
+**Cause:** Cookie string couldn't be parsed.
+
+**Solution:**
+```bash
+# Correct format (semicolon-separated)
+BXAuth=abc123; SessionID=xyz789; Token=token123
+
+# Incorrect formats to avoid
+BXAuth: abc123\nSessionID: xyz789  # Wrong: using colons and newlines
+{"BXAuth":"abc123"}  # Wrong: JSON format
+```
+
+#### Duplicate BXAuth detected
+
+**Cause:** This BXAuth identifier already exists in your auth directory.
+
+**Solution:**
+- This is actually helpful - it prevents duplicate credentials
+- If you want to refresh: delete the existing file first
+- If using a different account: get cookies from that account's session
+
+```bash
+# Remove duplicate if you want to re-authenticate
+rm /path/to/auth-dir/iflow-user@example.com-*.json
+./CLIProxyAPI -iflow-cookie
+```
+
+#### Cookie authentication failed
+
+**Possible causes:**
+- Cookies expired
+- Invalid or incomplete cookies
+- Not signed in to iFlow in browser
+- Network connectivity issues
+
+**Solution:**
+1. Sign in to iFlow in your browser
+2. Get fresh cookies immediately
+3. Paste cookies into CLI promptly
+4. Ensure no line breaks or formatting issues
+
+#### API key not returned
+
+**Cause:** iFlow servers didn't return an API key.
+
+**Solution:**
+- Verify your account has API access
+- Check if cookies are still valid
+- Sign in to iFlow web interface to refresh session
+- Contact iFlow support if issue persists
+
+### Common Issues (Both Methods)
+
+#### Token not saving
+
+**Cause:** Permission issues with auth directory.
+
+**Solution:**
+```bash
+mkdir -p /path/to/auth-dir
+chmod 755 /path/to/auth-dir
+```
+
+#### Email format invalid
+
+**Cause:** Email address format is incorrect.
+
+**Solution:**
+- Must be valid email format: `user@domain.com`
+- No spaces or special characters except `@`, `.`, `+`, `-`, `_`
+- Must match your actual iFlow account email
+
+## Security Considerations
+
+### OAuth Authentication Security
+
+- Uses standard OAuth 2.0 protocols
+- Tokens are refreshed automatically
+- Refresh tokens enable long-term access
+- Revocable through iFlow account settings
+
+### Cookie Authentication Security
+
+- **Less secure** than OAuth - cookies can be intercepted
+- **No automatic refresh** - manual re-auth needed when expired
+- **BXAuth is sensitive** - treat like a password
+- **Duplicate detection** prevents accidental credential duplication
+
+<Warning>
+**Cookie Security Best Practices:**
+- Never share cookies publicly or commit to version control
+- Get cookies from HTTPS connections only
+- Don't paste cookies in untrusted terminals
+- Delete cookies after copying from browser DevTools
+- Use OAuth flow for production environments
+</Warning>
+
+### Token File Security
+
+Both methods store sensitive credentials:
+
+- Files use `0600` permissions (owner-only read/write)
+- Auth directory should be `755` (rwxr-xr-x)
+- Never commit token files to git
+- Include auth directory in `.gitignore`
+- Back up securely if needed
+
+## Token Expiration and Refresh
+
+### OAuth Tokens
+
+- Automatically refreshed by the server
+- Refresh tokens enable seamless renewal
+- No manual intervention required
+- Check logs for refresh failures
+
+### Cookie Tokens
+
+- **Not automatically refreshed**
+- Expire when browser session expires
+- Require manual re-authentication
+- Expiration date shown during authentication
+
+```bash
+# Check expiration in token file
+cat /path/to/auth-dir/iflow-*.json | grep expire
+```
+
+When cookie tokens expire:
+1. Delete the expired token file
+2. Get fresh cookies from browser
+3. Run `-iflow-cookie` again
+
+## Re-authentication
+
+### Re-authenticate OAuth
+
+```bash
+# Remove old token
+rm /path/to/auth-dir/iflow-user@example.com-*.json
+
+# Run OAuth login
+./CLIProxyAPI -iflow-login
+```
+
+### Re-authenticate Cookie
+
+```bash
+# Remove old token
+rm /path/to/auth-dir/iflow-user@example.com-*.json
+
+# Get fresh cookies from browser
+# Run cookie authentication
+./CLIProxyAPI -iflow-cookie
+```
+
+<Tip>
+Set a reminder to re-authenticate before cookie expiration if you're using cookie authentication for important services.
+</Tip>
+
+## Best Practices
+
+1. **Choose the right method:**
+   - Production: Use OAuth flow
+   - Testing: Cookie auth is acceptable
+   - Long-term: OAuth provides automatic refresh
+
+2. **Email management:**
+   - Use the correct email for your iFlow account
+   - Different emails for different accounts
+   - Email in filename helps identify credentials
+
+3. **Cookie handling:**
+   - Get cookies from secure HTTPS sessions only
+   - Copy immediately after signing in
+   - Delete from browser DevTools after copying
+   - Don't store cookies in plaintext elsewhere
+
+4. **Multiple accounts:**
+   - Mix OAuth and cookie methods if needed
+   - Each account needs unique email
+   - Server handles credential rotation automatically
+
+5. **Security:**
+   - Protect token files like passwords
+   - Use appropriate file permissions
+   - Monitor auth directory for unauthorized access
+   - Re-authenticate if tokens may be compromised
+
+## Related Resources
+
+- [iFlow API Documentation](https://docs.iflow.example.com/)
+- [OAuth 2.0 Specification](https://oauth.net/2/)
+- [Configuration Guide](/configuration/server)
+- [Browser DevTools Guide](https://developer.chrome.com/docs/devtools/)

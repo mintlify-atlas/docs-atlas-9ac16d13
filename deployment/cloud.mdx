@@ -1,0 +1,431 @@
+---
+title: Cloud Deployment
+description: Deploy CLI Proxy API in cloud environments with dynamic configuration
+---
+
+CLI Proxy API supports cloud deployment mode with dynamic configuration loading, allowing you to deploy without an initial configuration file.
+
+## Cloud Deploy Mode
+
+Set the `DEPLOY` environment variable to `cloud` to enable cloud deployment mode:
+
+```bash
+DEPLOY=cloud
+```
+
+In cloud mode, the server:
+1. Starts without requiring a valid configuration file
+2. Waits for configuration to be provided via mounted volumes or management API
+3. Begins serving requests once configuration is detected
+
+## Docker Deployment
+
+### Using Docker Compose
+
+<Steps>
+  <Step title="Create docker-compose.yml">
+    ```yaml docker-compose.yml
+    services:
+      cli-proxy-api:
+        image: eceasy/cli-proxy-api:latest
+        container_name: cli-proxy-api
+        environment:
+          DEPLOY: cloud
+        ports:
+          - "8317:8317"
+        volumes:
+          - config-volume:/CLIProxyAPI
+        restart: unless-stopped
+
+    volumes:
+      config-volume:
+        external: true
+    ```
+  </Step>
+
+  <Step title="Create external volume">
+    ```bash
+    docker volume create config-volume
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    ```bash
+    docker compose up -d
+    ```
+
+    The service starts and waits for configuration:
+    ```
+    Cloud deploy mode: No configuration file detected; standing by for configuration
+    ```
+  </Step>
+
+  <Step title="Mount configuration">
+    Copy your configuration file to the volume:
+
+    ```bash
+    docker cp config.yaml cli-proxy-api:/CLIProxyAPI/config.yaml
+    docker compose restart
+    ```
+
+    The service detects the configuration and starts:
+    ```
+    Cloud deploy mode: Configuration file detected; starting service
+    ```
+  </Step>
+</Steps>
+
+### Using Docker Run
+
+```bash
+docker run -d \
+  --name cli-proxy-api \
+  -e DEPLOY=cloud \
+  -p 8317:8317 \
+  -v config-volume:/CLIProxyAPI \
+  eceasy/cli-proxy-api:latest
+```
+
+## Configuration Detection
+
+In cloud mode, the server checks for a valid configuration file at startup:
+
+```go
+if isCloudDeploy {
+    if info, errStat := os.Stat(configFilePath); errStat != nil {
+        log.Info("Cloud deploy mode: No configuration file detected; standing by for configuration")
+        configFileExists = false
+    } else if info.IsDir() {
+        log.Info("Cloud deploy mode: Config path is a directory; standing by for configuration")
+        configFileExists = false
+    } else if cfg.Port == 0 {
+        log.Info("Cloud deploy mode: Configuration file is empty or invalid; standing by for valid configuration")
+        configFileExists = false
+    } else {
+        log.Info("Cloud deploy mode: Configuration file detected; starting service")
+        configFileExists = true
+    }
+}
+```
+
+The server validates:
+1. Configuration file exists and is not a directory
+2. Configuration file is not empty
+3. Configuration contains a valid `port` setting
+
+## Environment Variables
+
+### Core Variables
+
+| Variable | Description | Default |
+|----------|-------------|----------|
+| `DEPLOY` | Deployment mode (`cloud` or empty) | _(none)_ |
+
+### Storage Backend Variables
+
+See [Storage Backends](/deployment/storage-backends) for remote storage configuration:
+
+- PostgreSQL: `PGSTORE_DSN`, `PGSTORE_SCHEMA`, `PGSTORE_LOCAL_PATH`
+- Git: `GITSTORE_GIT_URL`, `GITSTORE_GIT_USERNAME`, `GITSTORE_GIT_TOKEN`, `GITSTORE_LOCAL_PATH`
+- Object Storage: `OBJECTSTORE_ENDPOINT`, `OBJECTSTORE_BUCKET`, `OBJECTSTORE_ACCESS_KEY`, `OBJECTSTORE_SECRET_KEY`, `OBJECTSTORE_LOCAL_PATH`
+
+## Kubernetes Deployment
+
+### ConfigMap Approach
+
+<Steps>
+  <Step title="Create ConfigMap">
+    ```yaml configmap.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cli-proxy-config
+      namespace: default
+    data:
+      config.yaml: |
+        port: 8317
+        log_level: info
+        # Your configuration here
+    ```
+
+    ```bash
+    kubectl apply -f configmap.yaml
+    ```
+  </Step>
+
+  <Step title="Create Deployment">
+    ```yaml deployment.yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: cli-proxy-api
+      namespace: default
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: cli-proxy-api
+      template:
+        metadata:
+          labels:
+            app: cli-proxy-api
+        spec:
+          containers:
+          - name: cli-proxy-api
+            image: eceasy/cli-proxy-api:latest
+            ports:
+            - containerPort: 8317
+            env:
+            - name: DEPLOY
+              value: "cloud"
+            volumeMounts:
+            - name: config
+              mountPath: /CLIProxyAPI/config.yaml
+              subPath: config.yaml
+          volumes:
+          - name: config
+            configMap:
+              name: cli-proxy-config
+    ```
+
+    ```bash
+    kubectl apply -f deployment.yaml
+    ```
+  </Step>
+
+  <Step title="Create Service">
+    ```yaml service.yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: cli-proxy-api
+      namespace: default
+    spec:
+      selector:
+        app: cli-proxy-api
+      ports:
+      - protocol: TCP
+        port: 8317
+        targetPort: 8317
+      type: LoadBalancer
+    ```
+
+    ```bash
+    kubectl apply -f service.yaml
+    ```
+  </Step>
+</Steps>
+
+### Secret for Authentication
+
+Store OAuth tokens in Kubernetes Secrets:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cli-proxy-auth
+  namespace: default
+type: Opaque
+data:
+  # Base64 encoded auth files
+  gemini.json: <base64-encoded-content>
+```
+
+Mount the secret:
+
+```yaml
+volumeMounts:
+- name: auth
+  mountPath: /root/.cli-proxy-api
+volumes:
+- name: auth
+  secret:
+    secretName: cli-proxy-auth
+```
+
+## Configuration with Storage Backends
+
+For production cloud deployments, use remote storage backends:
+
+### PostgreSQL Backend
+
+```yaml docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      DEPLOY: cloud
+      PGSTORE_DSN: postgresql://user:pass@postgres:5432/cliproxy
+      PGSTORE_SCHEMA: public
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: cliproxy
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+### Git Backend
+
+```yaml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      DEPLOY: cloud
+      GITSTORE_GIT_URL: https://github.com/your-org/cli-proxy-config.git
+      GITSTORE_GIT_USERNAME: git-user
+      GITSTORE_GIT_TOKEN: ghp_your_token
+      GITSTORE_LOCAL_PATH: /data/cliproxy/gitstore
+    volumes:
+      - gitstore:/data/cliproxy/gitstore
+
+volumes:
+  gitstore:
+```
+
+### Object Storage Backend
+
+```yaml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      DEPLOY: cloud
+      OBJECTSTORE_ENDPOINT: https://s3.amazonaws.com
+      OBJECTSTORE_BUCKET: cli-proxy-config
+      OBJECTSTORE_ACCESS_KEY: ${AWS_ACCESS_KEY}
+      OBJECTSTORE_SECRET_KEY: ${AWS_SECRET_KEY}
+      OBJECTSTORE_LOCAL_PATH: /data/cliproxy/objectstore
+    volumes:
+      - objectstore:/data/cliproxy/objectstore
+
+volumes:
+  objectstore:
+```
+
+## Health Monitoring
+
+### Liveness Probe
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /
+    port: 8317
+  initialDelaySeconds: 30
+  periodSeconds: 10
+```
+
+### Readiness Probe
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /
+    port: 8317
+  initialDelaySeconds: 10
+  periodSeconds: 5
+```
+
+## Logging
+
+Configure log output via configuration file:
+
+```yaml config.yaml
+log_level: info
+log_output:
+  - type: file
+    path: /CLIProxyAPI/logs/app.log
+    max_size_mb: 100
+    max_backups: 3
+  - type: stdout
+```
+
+In cloud environments, prefer stdout logging for integration with log aggregation systems:
+
+```yaml
+log_output:
+  - type: stdout
+```
+
+## Scaling Considerations
+
+### Stateless Deployment
+
+When using remote storage backends (PostgreSQL, Git, or Object Storage), the service becomes stateless and can be scaled horizontally:
+
+```yaml
+spec:
+  replicas: 3  # Multiple instances
+```
+
+### Local File Storage
+
+With local file storage, use single-instance deployments or shared volumes:
+
+```yaml
+volumes:
+- name: shared-config
+  persistentVolumeClaim:
+    claimName: cli-proxy-pvc
+```
+
+## Troubleshooting
+
+### Service Won't Start
+
+Check logs for configuration issues:
+
+```bash
+docker compose logs cli-proxy-api
+```
+
+Common issues:
+- Missing `DEPLOY=cloud` variable
+- Invalid configuration file format
+- Missing required configuration fields (e.g., `port`)
+
+### Configuration Not Detected
+
+Verify file is mounted correctly:
+
+```bash
+docker exec cli-proxy-api ls -la /CLIProxyAPI/config.yaml
+docker exec cli-proxy-api cat /CLIProxyAPI/config.yaml
+```
+
+### Storage Backend Connection Failed
+
+Check environment variables and network connectivity:
+
+```bash
+# PostgreSQL
+docker exec cli-proxy-api env | grep PGSTORE
+
+# Git
+docker exec cli-proxy-api env | grep GITSTORE
+
+# Object Storage
+docker exec cli-proxy-api env | grep OBJECTSTORE
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Storage Backends" icon="database" href="/deployment/storage-backends">
+    Configure PostgreSQL, Git, or Object Storage backends
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/server">
+    Learn about available configuration options
+  </Card>
+</CardGroup>

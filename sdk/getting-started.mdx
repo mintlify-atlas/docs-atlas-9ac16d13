@@ -1,0 +1,332 @@
+---
+title: 'Getting Started'
+description: 'Install the Go SDK and create your first embedded proxy'
+---
+
+## Installation
+
+Add the CLI Proxy API SDK to your Go project:
+
+```bash
+go get github.com/router-for-me/CLIProxyAPI/v6
+```
+
+<Note>
+  The SDK requires Go 1.21 or later.
+</Note>
+
+## Quick Start Example
+
+Here's a complete minimal example to embed the proxy in your application:
+
+```go main.go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "os/signal"
+    "syscall"
+
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+func main() {
+    // Load configuration from file
+    cfg, err := config.LoadConfig("config.yaml")
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Build the service
+    svc, err := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        Build()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to build service: %v\n", err)
+        os.Exit(1)
+    }
+
+    // Set up graceful shutdown
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+    go func() {
+        <-sigChan
+        fmt.Println("\nReceived shutdown signal...")
+        cancel()
+    }()
+
+    // Run the service (blocks until context is cancelled)
+    fmt.Println("Starting CLI Proxy API server...")
+    if err := svc.Run(ctx); err != nil && err != context.Canceled {
+        fmt.Fprintf(os.Stderr, "Service error: %v\n", err)
+        os.Exit(1)
+    }
+
+    fmt.Println("Service stopped gracefully")
+}
+```
+
+## Configuration File
+
+Create a basic `config.yaml` file:
+
+```yaml config.yaml
+host: 127.0.0.1
+port: 8080
+auth_dir: ./auth
+log_level: info
+
+# Optional: Add API keys for providers
+gemini_key:
+  - api_key: "your-gemini-api-key"
+
+claude_key:
+  - api_key: "your-claude-api-key"
+
+codex_key:
+  - api_key: "your-openai-api-key"
+```
+
+<Note>
+  See the [Configuration Reference](/configuration/server) for all available options.
+</Note>
+
+## Running Your Application
+
+<Steps>
+  <Step title="Build your application">
+    Compile your Go application:
+    
+    ```bash
+    go build -o myapp
+    ```
+  </Step>
+
+  <Step title="Create configuration">
+    Ensure your `config.yaml` file is in the same directory or specify a different path.
+  </Step>
+
+  <Step title="Run the application">
+    Start your application:
+    
+    ```bash
+    ./myapp
+    ```
+    
+    You should see:
+    ```
+    Starting CLI Proxy API server...
+    API server started successfully on: 127.0.0.1:8080
+    ```
+  </Step>
+
+  <Step title="Test the API">
+    Make a test request:
+    
+    ```bash
+    curl http://localhost:8080/v1/models
+    ```
+  </Step>
+</Steps>
+
+## Understanding the Code
+
+### Loading Configuration
+
+```go
+cfg, err := config.LoadConfig("config.yaml")
+```
+
+The `LoadConfig` function reads your YAML configuration and returns a `*config.Config` struct.
+
+### Building the Service
+
+```go
+svc, err := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    WithConfigPath("config.yaml").
+    Build()
+```
+
+The builder pattern allows you to configure the service with:
+- **`WithConfig`**: Sets the configuration object
+- **`WithConfigPath`**: Sets the path for file watching (automatic reload)
+- **`Build()`**: Creates the service instance
+
+### Running the Service
+
+```go
+if err := svc.Run(ctx); err != nil {
+    // Handle error
+}
+```
+
+The `Run` method:
+- Starts the HTTP server
+- Initializes authentication providers
+- Starts file watchers for config and auth changes
+- Blocks until the context is cancelled
+- Returns when shutdown is complete
+
+## Graceful Shutdown
+
+The example includes graceful shutdown handling:
+
+```go
+// Create cancellable context
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+// Listen for shutdown signals
+sigChan := make(chan os.Signal, 1)
+signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+go func() {
+    <-sigChan
+    cancel() // Cancel context to stop service
+}()
+
+// Run will return when context is cancelled
+svc.Run(ctx)
+```
+
+When the service receives a shutdown signal:
+1. Context is cancelled
+2. HTTP server stops accepting new requests
+3. Existing requests are completed
+4. File watchers are stopped
+5. Authentication providers are cleaned up
+6. `Run()` returns
+
+## Common Patterns
+
+### Using Environment Variables
+
+```go
+import "github.com/joho/godotenv"
+
+func main() {
+    // Load .env file
+    godotenv.Load()
+    
+    // Get config path from environment
+    configPath := os.Getenv("CONFIG_PATH")
+    if configPath == "" {
+        configPath = "config.yaml"
+    }
+    
+    cfg, err := config.LoadConfig(configPath)
+    // ...
+}
+```
+
+### Custom Port Binding
+
+```go
+cfg, _ := config.LoadConfig("config.yaml")
+
+// Override port from configuration
+if port := os.Getenv("PORT"); port != "" {
+    if p, err := strconv.Atoi(port); err == nil {
+        cfg.Port = p
+    }
+}
+
+svc, _ := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    // ...
+```
+
+### Multiple Services
+
+You can run multiple proxy instances in the same process:
+
+```go
+// Production service
+prodCfg, _ := config.LoadConfig("prod-config.yaml")
+prodSvc, _ := cliproxy.NewBuilder().
+    WithConfig(prodCfg).
+    WithConfigPath("prod-config.yaml").
+    Build()
+
+// Development service on different port
+devCfg, _ := config.LoadConfig("dev-config.yaml")
+devCfg.Port = 8081
+devSvc, _ := cliproxy.NewBuilder().
+    WithConfig(devCfg).
+    WithConfigPath("dev-config.yaml").
+    Build()
+
+// Run both
+go prodSvc.Run(ctx)
+go devSvc.Run(ctx)
+
+// Wait...
+```
+
+## Error Handling
+
+Common errors and how to handle them:
+
+### Configuration Errors
+
+```go
+cfg, err := config.LoadConfig("config.yaml")
+if err != nil {
+    // File not found, invalid YAML, etc.
+    log.Fatalf("Config error: %v", err)
+}
+```
+
+### Build Errors
+
+```go
+svc, err := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    WithConfigPath("config.yaml").
+    Build()
+if err != nil {
+    // Missing required configuration
+    log.Fatalf("Build error: %v", err)
+}
+```
+
+### Runtime Errors
+
+```go
+if err := svc.Run(ctx); err != nil {
+    if err == context.Canceled {
+        // Normal shutdown
+        log.Println("Service stopped")
+    } else {
+        // Unexpected error
+        log.Fatalf("Runtime error: %v", err)
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Embedding Guide" icon="code" href="/sdk/embedding">
+    Learn about builder options, hooks, and advanced configuration
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/server">
+    Explore all configuration options
+  </Card>
+  <Card title="Advanced Features" icon="gears" href="/sdk/advanced">
+    Implement custom executors and translators
+  </Card>
+  <Card title="Access Control" icon="shield" href="/sdk/access">
+    Add custom authentication
+  </Card>
+</CardGroup>

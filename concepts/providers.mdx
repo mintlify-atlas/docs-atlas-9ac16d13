@@ -1,0 +1,656 @@
+---
+title: 'Providers'
+description: 'Supported AI providers and how they integrate with CLI Proxy API'
+---
+
+## Overview
+
+CLI Proxy API supports multiple AI providers, each with unique authentication methods, model catalogs, and capabilities.
+
+## Supported Providers
+
+<CardGroup cols={3}>
+  <Card title="Gemini" icon="google">
+    Google's Gemini models via OAuth, API keys, or Vertex AI
+  </Card>
+  <Card title="Claude" icon="anthropic">
+    Anthropic Claude models via OAuth or API keys
+  </Card>
+  <Card title="Codex" icon="openai">
+    OpenAI GPT models via OAuth
+  </Card>
+  <Card title="Qwen" icon="cloud">
+    Alibaba Qwen Code models via OAuth
+  </Card>
+  <Card title="iFlow" icon="bolt">
+    Z.ai GLM models via OAuth
+  </Card>
+  <Card title="Antigravity" icon="rocket">
+    Google's code assistance platform
+  </Card>
+  <Card title="Kimi" icon="moon">
+    Moonshot AI models via OAuth
+  </Card>
+  <Card title="AI Studio" icon="star">
+    Google AI Studio API keys
+  </Card>
+  <Card title="Vertex AI" icon="cloud">
+    Google Cloud Vertex AI endpoints
+  </Card>
+</CardGroup>
+
+## Provider Details
+
+### Gemini CLI
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `gemini-2.5-pro` - Latest Pro model
+- `gemini-2.5-flash` - Fast Flash model
+- `gemini-3-pro-preview` - Preview models
+- `gemini-3-pro-high` - High performance variant
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth gemini
+```
+
+```yaml config.yaml
+# Optional: Configure OAuth model aliases
+oauth-model-alias:
+  gemini-cli:
+    - name: "gemini-2.5-pro"
+      alias: "g2.5p"
+      fork: true  # Keep both original and alias
+
+# Optional: Exclude models
+oauth-excluded-models:
+  gemini-cli:
+    - "*-preview"     # Exclude all preview models
+    - "gemini-2.5-*"  # Exclude 2.5 series
+```
+
+```http Request
+POST http://localhost:8317/v1/chat/completions
+Authorization: Bearer your-api-key
+Content-Type: application/json
+
+{
+  "model": "gemini-2.5-pro",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ]
+}
+```
+</CodeGroup>
+
+**Features**:
+- Multi-account load balancing
+- Automatic token refresh
+- Virtual parent grouping for project-based accounts
+- Support for thinking models with budget configuration
+
+**File Format**:
+```bash
+~/.cli-proxy-api/gemini_oauth_your-email@gmail.com.json
+```
+
+### AI Studio (Gemini API Keys)
+
+**Authentication**: API Key
+
+**Configuration**:
+
+```yaml config.yaml
+gemini-api-key:
+  - api-key: "AIzaSyDemoKey123456789"
+    prefix: "studio"  # Optional: target with "studio/model-name"
+    base-url: "https://generativelanguage.googleapis.com"
+    headers:
+      X-Custom-Header: "custom-value"
+    proxy-url: "socks5://proxy.example.com:1080"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "gemini-flash"
+    excluded-models:
+      - "gemini-2.5-pro"
+      - "*-preview"
+```
+
+**Features**:
+- Direct API key access
+- Custom base URLs for relay services
+- Per-key proxy configuration
+- Model aliasing and exclusion
+
+### Vertex AI
+
+**Authentication**: API Key (Vertex-compatible endpoints)
+
+**Configuration**:
+
+```yaml config.yaml
+vertex-api-key:
+  - api-key: "vk-123456789"  # x-goog-api-key header
+    prefix: "vertex"
+    base-url: "https://example.com/api"  # e.g. https://zenmux.ai/api
+    proxy-url: "socks5://proxy.example.com:1080"
+    headers:
+      X-Custom-Header: "custom-value"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "vertex-flash"
+      - name: "gemini-2.5-pro"
+        alias: "vertex-pro"
+    excluded-models:
+      - "imagen-3.0-generate-002"
+      - "imagen-*"
+```
+
+**Use Case**: Third-party Vertex AI endpoints that use API keys instead of service accounts.
+
+### Claude Code
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `claude-sonnet-4` - Claude Sonnet 4
+- `claude-opus-4-5-20251101` - Claude Opus 4.5
+- `claude-3-5-sonnet-20241022` - Claude 3.5 Sonnet
+- `claude-3-5-haiku-20241022` - Claude 3.5 Haiku
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth claude
+```
+
+```yaml config.yaml
+# Optional: Configure OAuth model aliases
+oauth-model-alias:
+  claude:
+    - name: "claude-sonnet-4-5-20250929"
+      alias: "cs4.5"
+
+# Optional: Exclude models
+oauth-excluded-models:
+  claude:
+    - "claude-3-5-haiku-20241022"
+    - "*-thinking"
+```
+</CodeGroup>
+
+**Features**:
+- Multi-organization support
+- Custom TLS fingerprinting (bypasses Cloudflare)
+- Request cloaking for non-Claude-Code clients
+- Automatic session management
+
+**File Format**:
+```bash
+~/.cli-proxy-api/claude_oauth_org-uuid.json
+```
+
+**Request Cloaking**:
+
+Clause Code has detection mechanisms to identify non-official clients. CLI Proxy API supports request cloaking:
+
+```yaml config.yaml
+claude-api-key:
+  - api-key: "sk-ant-api03-..."
+    cloak:
+      mode: "auto"           # "auto", "always", or "never"
+      strict-mode: false     # Strip user system messages
+      sensitive-words:       # Obfuscate with zero-width chars
+        - "API"
+        - "proxy"
+      cache-user-id: true    # Reuse cached user_id
+```
+
+Cloaking features:
+- **auto**: Cloak only for non-Claude-Code clients
+- **always**: Always apply cloaking
+- **never**: Disable cloaking
+- **strict-mode**: Strip all user system messages
+- **sensitive-words**: Obfuscate specific words
+
+### Claude API (API Keys)
+
+**Authentication**: API Key
+
+**Configuration**:
+
+```yaml config.yaml
+claude-api-key:
+  - api-key: "sk-ant-api03-..."
+    prefix: "official"  # Optional
+    base-url: "https://api.anthropic.com"  # Official endpoint
+    headers:
+      X-Custom-Header: "custom-value"
+    proxy-url: "socks5://proxy.example.com:1080"
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "claude-sonnet-latest"
+    excluded-models:
+      - "claude-opus-4-5-20251101"
+      - "*-haiku*"
+```
+
+**Use Case**: Official Anthropic API keys or relay services.
+
+### OpenAI Codex
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `gpt-5-codex` - GPT-5 for coding
+- `gpt-5` - GPT-5 base model
+- `o3-mini` - O3 mini model
+- `o1-preview` - O1 preview model
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth codex
+```
+
+```yaml config.yaml
+# Optional: Configure OAuth model aliases
+oauth-model-alias:
+  codex:
+    - name: "gpt-5"
+      alias: "g5"
+
+# Optional: Exclude models
+oauth-excluded-models:
+  codex:
+    - "gpt-5-codex-mini"
+    - "*-mini"
+```
+</CodeGroup>
+
+**Features**:
+- JWT-based session tokens
+- Organization membership tracking
+- Refresh token rotation
+- Support for reasoning models
+
+**File Format**:
+```bash
+~/.cli-proxy-api/codex_oauth_your-email@example.com.json
+```
+
+### Codex API (API Keys)
+
+**Authentication**: API Key
+
+**Configuration**:
+
+```yaml config.yaml
+codex-api-key:
+  - api-key: "sk-atSM..."
+    prefix: "openai"
+    base-url: "https://api.openai.com/v1"  # Or custom endpoint
+    headers:
+      X-Custom-Header: "custom-value"
+    proxy-url: "socks5://proxy.example.com:1080"
+    models:
+      - name: "gpt-5-codex"
+        alias: "codex-latest"
+    excluded-models:
+      - "gpt-5.1"
+      - "*-mini"
+```
+
+**Use Case**: OpenAI API keys or OpenAI-compatible relay services.
+
+### Qwen Code
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `qwen3-coder-plus` - Qwen 3 Coder Plus
+- `qwen3.5-plus` - Qwen 3.5 Plus
+- `qwen-max` - Qwen Max model
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth qwen
+```
+
+```yaml config.yaml
+oauth-model-alias:
+  qwen:
+    - name: "qwen3-coder-plus"
+      alias: "qwen-plus"
+
+oauth-excluded-models:
+  qwen:
+    - "vision-model"
+```
+</CodeGroup>
+
+**Features**:
+- Alibaba Cloud integration
+- Multi-account support
+- Cookie-based authentication
+
+**File Format**:
+```bash
+~/.cli-proxy-api/qwen_oauth_account-id.json
+```
+
+### iFlow (Z.ai GLM)
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `glm-4.7` - GLM 4.7
+- `glm-5` - GLM 5 (Pro users)
+- `tstars2.0` - TStar models
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth iflow
+```
+
+```yaml config.yaml
+oauth-model-alias:
+  iflow:
+    - name: "glm-4.7"
+      alias: "glm-god"
+
+oauth-excluded-models:
+  iflow:
+    - "tstars2.0"
+```
+</CodeGroup>
+
+**Sponsor**: This project is sponsored by Z.ai's GLM CODING PLAN starting at $10/month.
+
+**Features**:
+- GLM CODING PLAN integration
+- Multi-model support
+- Cookie-based session management
+
+**File Format**:
+```bash
+~/.cli-proxy-api/iflow_oauth_account-id.json
+```
+
+### Antigravity
+
+**Authentication**: OAuth 2.0 (Google OAuth)
+
+**Models**:
+- `gemini-3-pro-high` - High performance model
+- `gemini-3-pro-preview` - Preview models
+- Other Gemini variants
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth antigravity
+```
+
+```yaml config.yaml
+oauth-model-alias:
+  antigravity:
+    - name: "gemini-3-pro-high"
+      alias: "gemini-3-pro-preview"
+
+oauth-excluded-models:
+  antigravity:
+    - "gemini-3-pro-preview"
+```
+</CodeGroup>
+
+**Features**:
+- Google's code assistance platform
+- Project ID management
+- Onboarding flow for new users
+- Tier-based access
+
+**File Format**:
+```bash
+~/.cli-proxy-api/antigravity_oauth_email@gmail.com.json
+```
+
+### Kimi
+
+**Authentication**: OAuth 2.0
+
+**Models**:
+- `kimi-k2.5` - Kimi K2.5
+- `kimi-k2` - Kimi K2
+- `kimi-k2-thinking` - Thinking variant
+
+**Configuration**:
+
+<CodeGroup>
+```bash Authentication
+cli-proxy-api auth kimi
+```
+
+```yaml config.yaml
+oauth-model-alias:
+  kimi:
+    - name: "kimi-k2.5"
+      alias: "k2.5"
+
+oauth-excluded-models:
+  kimi:
+    - "kimi-k2-thinking"
+```
+</CodeGroup>
+
+**Features**:
+- Moonshot AI integration
+- Cookie-based authentication
+- Multi-account support
+
+**File Format**:
+```bash
+~/.cli-proxy-api/kimi_oauth_account-id.json
+```
+
+### OpenAI Compatibility
+
+**Authentication**: API Key
+
+**Use Case**: Any OpenAI-compatible endpoint (OpenRouter, local models, custom APIs)
+
+**Configuration**:
+
+```yaml config.yaml
+openai-compatibility:
+  - name: "openrouter"
+    prefix: "router"  # Use as "router/model-name"
+    base-url: "https://openrouter.ai/api/v1"
+    headers:
+      HTTP-Referer: "https://yourapp.com"
+      X-Title: "Your App"
+    api-key-entries:
+      - api-key: "sk-or-v1-abc123"
+        proxy-url: "socks5://proxy.example.com:1080"
+      - api-key: "sk-or-v1-xyz789"  # Multiple keys for load balancing
+    models:
+      - name: "anthropic/claude-3.5-sonnet"
+        alias: "claude-sonnet"
+      - name: "google/gemini-pro"
+        alias: "gemini-pro"
+      # Internal model pools: same alias, multiple upstream models
+      - name: "qwen3.5-plus"
+        alias: "claude-opus-4.66"
+      - name: "glm-5"
+        alias: "claude-opus-4.66"
+      - name: "kimi-k2.5"
+        alias: "claude-opus-4.66"
+```
+
+**Model Pools**:
+
+You can map multiple upstream models to the same alias for automatic failover:
+
+```yaml
+models:
+  - name: "qwen3.5-plus"
+    alias: "best-model"
+  - name: "glm-5"
+    alias: "best-model"
+  - name: "claude-3.5-sonnet"
+    alias: "best-model"
+```
+
+Requests to `best-model` will round-robin across `qwen3.5-plus`, `glm-5`, and `claude-3.5-sonnet`. If one fails before producing output, the next model in the pool is tried.
+
+## Provider Comparison
+
+| Provider | Auth Method | Multi-Account | Streaming | Thinking | Image Input |
+|----------|-------------|---------------|-----------|----------|-------------|
+| Gemini CLI | OAuth | ✅ | ✅ | ✅ | ✅ |
+| AI Studio | API Key | ✅ | ✅ | ✅ | ✅ |
+| Vertex AI | API Key | ✅ | ✅ | ✅ | ✅ |
+| Claude Code | OAuth | ✅ | ✅ | ✅ | ✅ |
+| Claude API | API Key | ✅ | ✅ | ✅ | ✅ |
+| Codex | OAuth | ✅ | ✅ | ✅ | ❌ |
+| Codex API | API Key | ✅ | ✅ | ✅ | ❌ |
+| Qwen | OAuth | ✅ | ✅ | ❌ | ✅ |
+| iFlow | OAuth | ✅ | ✅ | ❌ | ❌ |
+| Antigravity | OAuth | ✅ | ✅ | ✅ | ✅ |
+| Kimi | OAuth | ✅ | ✅ | ✅ | ❌ |
+| OpenAI Compat | API Key | ✅ | ✅ | Varies | Varies |
+
+## Provider Selection
+
+When a request specifies a model, CLI Proxy API:
+
+1. **Resolves aliases** - Converts client model names to upstream names
+2. **Finds providers** - Identifies which providers offer the model
+3. **Filters credentials** - Excludes disabled/cooldown/quota-exceeded credentials
+4. **Applies routing** - Uses round-robin or fill-first strategy
+5. **Executes request** - Sends to selected provider
+
+### Model Prefix Routing
+
+Force a specific provider using prefixes:
+
+```bash
+# Force personal Gemini account
+curl -d '{"model": "personal/gemini-2.5-pro", ...}' ...
+
+# Force work Claude account
+curl -d '{"model": "work/claude-sonnet-4", ...}' ...
+
+# Force OpenRouter provider
+curl -d '{"model": "router/anthropic/claude-3.5-sonnet", ...}' ...
+```
+
+See [Routing](/concepts/routing) for details.
+
+## Provider-Specific Features
+
+### Thinking Models
+
+Providers that support thinking/reasoning:
+
+<CodeGroup>
+```json Gemini Thinking Budget
+{
+  "model": "gemini-2.5-pro",
+  "messages": [...],
+  "generationConfig": {
+    "thinkingConfig": {
+      "thinkingBudget": 32768  // Token budget for thinking
+    }
+  }
+}
+```
+
+```json Codex Reasoning Effort
+{
+  "model": "gpt-5",
+  "messages": [...],
+  "reasoning": {
+    "effort": "high"  // "low", "medium", "high"
+  }
+}
+```
+</CodeGroup>
+
+### Multimodal Input
+
+Providers supporting image input:
+
+```json
+{
+  "model": "gemini-2.5-pro",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "What's in this image?"},
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/jpeg;base64,/9j/4AAQ..."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+### WebSocket API
+
+Some providers support WebSocket connections for lower latency:
+
+```yaml config.yaml
+ws-auth: true  # Enable WebSocket authentication
+```
+
+```json Auth File
+{
+  "access_token": "...",
+  "attributes": {
+    "websockets": "true"
+  }
+}
+```
+
+Connect via:
+```
+ws://localhost:8317/v1/ws
+```
+
+## Adding Custom Providers
+
+See the [Custom Provider Example](https://github.com/router-for-me/CLIProxyAPI/tree/main/examples/custom-provider) for implementing custom provider integrations using the SDK.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="OAuth Setup" icon="lock" href="/oauth/gemini">
+    Authenticate with OAuth providers
+  </Card>
+  <Card title="API Keys" icon="key" href="/configuration/api-keys">
+    Configure API key providers
+  </Card>
+  <Card title="Routing" icon="route" href="/concepts/routing">
+    Learn about provider selection
+  </Card>
+  <Card title="Model Mappings" icon="shuffle" href="/configuration/model-mappings">
+    Configure model aliases and mappings
+  </Card>
+</CardGroup>

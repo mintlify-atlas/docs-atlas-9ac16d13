@@ -1,0 +1,160 @@
+---
+title: 'Go SDK Overview'
+description: 'Embed the CLI Proxy API server in your Go applications'
+---
+
+## What is the Go SDK?
+
+The CLI Proxy API Go SDK allows you to embed the complete proxy server functionality directly into your Go applications. Instead of running the proxy as a standalone service, you can integrate it as a library component with full programmatic control.
+
+## Key Features
+
+- **Complete Embedding**: Run the full proxy server inside your application
+- **Programmatic Control**: Configure and manage the service through Go code
+- **Custom Providers**: Add your own AI service providers with custom executors
+- **Request Translators**: Transform requests between different API formats
+- **Access Control**: Implement custom authentication and authorization
+- **Lifecycle Hooks**: Hook into service startup and shutdown events
+- **File Watching**: Automatic configuration and authentication reload
+- **Usage Tracking**: Monitor API usage and token consumption
+
+## Use Cases
+
+### Desktop Applications
+
+Embed the proxy in desktop apps to provide AI capabilities without requiring users to run a separate server:
+
+```go
+// Your desktop app can start the proxy internally
+svc, _ := cliproxy.NewBuilder().
+    WithConfig(cfg).
+    WithConfigPath(configPath).
+    Build()
+
+go svc.Run(context.Background())
+```
+
+### Custom AI Gateways
+
+Build specialized AI routing services with custom logic:
+
+- Add custom authentication providers
+- Implement request rate limiting
+- Route requests based on custom business logic
+- Add monitoring and observability
+
+### Integration Services
+
+Create services that bridge multiple AI providers:
+
+- Combine multiple AI services under one API
+- Add custom retry logic and failover
+- Implement request caching
+- Add request/response transformation
+
+### Testing and Development
+
+Embed the proxy in test suites for integration testing:
+
+```go
+func TestAIIntegration(t *testing.T) {
+    svc := startEmbeddedProxy(t)
+    defer svc.Shutdown(context.Background())
+    
+    // Test your AI-powered features
+}
+```
+
+## Architecture Overview
+
+The SDK is organized into several key packages:
+
+### Core Packages
+
+- **`sdk/cliproxy`**: Main service and builder for embedding the proxy
+- **`sdk/config`**: Configuration loading and management
+- **`sdk/cliproxy/auth`**: Authentication and credential management
+- **`sdk/cliproxy/executor`**: Provider executors for AI services
+- **`sdk/translator`**: Request/response format translators
+- **`sdk/access`**: Request authentication and access control
+
+### Component Flow
+
+```
+Incoming Request
+       ↓
+Access Manager (Authentication)
+       ↓
+Auth Manager (Credential Selection)
+       ↓
+Translator (Format Conversion)
+       ↓
+Executor (Provider API Call)
+       ↓
+Translator (Response Conversion)
+       ↓
+Outgoing Response
+```
+
+## Quick Example
+
+Here's a minimal example of embedding the proxy:
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
+    "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
+)
+
+func main() {
+    // Load configuration
+    cfg, err := config.LoadConfig("config.yaml")
+    if err != nil {
+        panic(err)
+    }
+
+    // Build the service
+    svc, err := cliproxy.NewBuilder().
+        WithConfig(cfg).
+        WithConfigPath("config.yaml").
+        Build()
+    if err != nil {
+        panic(err)
+    }
+
+    // Run the service (blocks until context is cancelled)
+    if err := svc.Run(context.Background()); err != nil {
+        panic(err)
+    }
+}
+```
+
+## Installation
+
+Add the SDK to your Go project:
+
+```bash
+go get github.com/router-for-me/CLIProxyAPI/v6
+```
+
+The SDK requires Go 1.21 or later.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Getting Started" icon="rocket" href="/sdk/getting-started">
+    Install the SDK and create your first embedded proxy
+  </Card>
+  <Card title="Embedding Guide" icon="code" href="/sdk/embedding">
+    Learn about the builder pattern, options, and lifecycle hooks
+  </Card>
+  <Card title="Advanced Features" icon="gears" href="/sdk/advanced">
+    Implement custom executors and translators
+  </Card>
+  <Card title="Access Control" icon="shield" href="/sdk/access">
+    Add custom authentication providers
+  </Card>
+</CardGroup>

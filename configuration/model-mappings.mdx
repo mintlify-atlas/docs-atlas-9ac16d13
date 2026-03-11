@@ -1,0 +1,348 @@
+---
+title: Model Mappings
+description: Configure model aliases and mappings for API key providers and Amp integration
+---
+
+## Overview
+
+Model mappings allow you to create aliases for upstream model names, making it easier for clients to reference models without remembering long version strings. The CLI Proxy API supports model mappings for API key providers and Amp integration.
+
+## API Key Provider Aliases
+
+Each API key provider (Gemini, Claude, Codex, OpenAI-compatible, Vertex-compatible) supports per-credential model aliases.
+
+### Gemini API Key Models
+
+<ParamField path="gemini-api-key[].models" type="array">
+  Model aliases for Gemini API keys.
+  
+  <Expandable title="Model Properties">
+    <ParamField path="models[].name" type="string" required>
+      Upstream model name (actual model identifier used by Gemini).
+    </ParamField>
+    
+    <ParamField path="models[].alias" type="string" required>
+      Client-facing alias for the model.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+#### Gemini Example
+
+```yaml
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    prefix: "team-a"
+    base-url: "https://generativelanguage.googleapis.com"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "gemini-flash"      # Client uses "team-a/gemini-flash"
+      - name: "gemini-2.5-pro"
+        alias: "gemini-pro"        # Client uses "team-a/gemini-pro"
+```
+
+Client request:
+```bash
+curl https://proxy.com/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "team-a/gemini-flash",  # Mapped to "gemini-2.5-flash"
+    "messages": [...]
+  }'
+```
+
+### Claude API Key Models
+
+<ParamField path="claude-api-key[].models" type="array">
+  Model aliases for Claude API keys.
+</ParamField>
+
+#### Claude Example
+
+```yaml
+claude-api-key:
+  - api-key: "sk-atSM..."
+    prefix: "production"
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        alias: "claude-sonnet-latest"    # production/claude-sonnet-latest
+      - name: "claude-opus-4-5-20251101"
+        alias: "claude-opus-latest"      # production/claude-opus-latest
+```
+
+### Codex API Key Models
+
+<ParamField path="codex-api-key[].models" type="array">
+  Model aliases for Codex API keys.
+</ParamField>
+
+#### Codex Example
+
+```yaml
+codex-api-key:
+  - api-key: "sk-atSM..."
+    base-url: "https://api.openai.com"
+    models:
+      - name: "gpt-5-codex"
+        alias: "codex-latest"      # codex-latest
+      - name: "gpt-5"
+        alias: "gpt-latest"        # gpt-latest
+```
+
+### OpenAI Compatibility Models
+
+<ParamField path="openai-compatibility[].models" type="array">
+  Model aliases for OpenAI-compatible providers (OpenRouter, DeepSeek, etc.).
+</ParamField>
+
+#### OpenAI Compatibility Example
+
+```yaml
+openai-compatibility:
+  - name: "openrouter"
+    prefix: "or"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-...b780"
+    models:
+      - name: "moonshotai/kimi-k2:free"
+        alias: "kimi-k2"           # or/kimi-k2
+      
+      # Model pool: same alias, multiple upstream models
+      - name: "qwen3.5-plus"
+        alias: "claude-opus-4.66"  # or/claude-opus-4.66
+      - name: "glm-5"
+        alias: "claude-opus-4.66"  # Same alias!
+      - name: "kimi-k2.5"
+        alias: "claude-opus-4.66"  # Round-robin across all 3
+```
+
+<Tip>
+  **Model Pools:**
+  
+  You can repeat the same alias with different upstream names to create a model pool. Requests to that alias will:
+  - Round-robin across the upstream models
+  - Retry with the next model if the first fails before producing output
+  - Appear as a single model in the model list
+</Tip>
+
+### Vertex-Compatible API Key Models
+
+<ParamField path="vertex-api-key[].models" type="array">
+  Model aliases for Vertex-compatible providers (ZenMux, etc.).
+</ParamField>
+
+#### Vertex-Compatible Example
+
+```yaml
+vertex-api-key:
+  - api-key: "vk-123..."
+    base-url: "https://zenmux.ai/api"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "vertex-flash"      # vertex-flash
+      - name: "gemini-2.5-pro"
+        alias: "vertex-pro"        # vertex-pro
+```
+
+## Amp Model Mappings
+
+Amp model mappings route unavailable Amp models to alternative models available in your local proxy.
+
+<ParamField path="ampcode.model-mappings" type="array">
+  Model name mappings for Amp CLI requests.
+  
+  <Expandable title="Mapping Properties">
+    <ParamField path="model-mappings[].from" type="string" required>
+      Model name requested by Amp CLI (e.g., `"claude-opus-4-5-20251101"`).
+    </ParamField>
+    
+    <ParamField path="model-mappings[].to" type="string" required>
+      Target model name to route to. Must have available providers in the registry.
+    </ParamField>
+    
+    <ParamField path="model-mappings[].regex" type="boolean" default="false">
+      Whether the `from` field is a regular expression. Regex mappings are evaluated after exact matches.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="ampcode.force-model-mappings" type="boolean" default="false">
+  When true, model mappings take precedence over local API keys. When false (default), local API keys are used first if available.
+</ParamField>
+
+### Amp Mapping Example
+
+```yaml
+ampcode:
+  upstream-url: "https://ampcode.com"
+  
+  # Model Mappings
+  model-mappings:
+    # Exact matches
+    - from: "claude-opus-4-5-20251101"
+      to: "gemini-claude-opus-4-5-thinking"
+    - from: "claude-sonnet-4-5-20250929"
+      to: "gemini-claude-sonnet-4-5-thinking"
+    - from: "claude-haiku-4-5-20251001"
+      to: "gemini-2.5-flash"
+    
+    # Regex patterns (evaluated after exact matches)
+    - from: "^gpt-5-.*"
+      to: "claude-sonnet-latest"
+      regex: true
+  
+  # Force mappings to run before local keys
+  force-model-mappings: false
+```
+
+### How Amp Mappings Work
+
+1. **Client requests model**: Amp CLI requests `claude-opus-4-5-20251101`
+2. **Check mappings** (if `force-model-mappings: true`, otherwise check local keys first)
+3. **Apply mapping**: Route to `gemini-claude-opus-4-5-thinking`
+4. **Use mapped model**: Request proceeds with the target model
+
+<Note>
+  **Mapping Priority:**
+  
+  When `force-model-mappings: false` (default):
+  1. Check local API keys first
+  2. If no local key available, apply mappings
+  3. If no mapping matches, fall back to upstream Amp
+  
+  When `force-model-mappings: true`:
+  1. Apply mappings first
+  2. If no mapping matches, check local API keys
+  3. Fall back to upstream Amp
+</Note>
+
+## Model Prefix Routing
+
+<ParamField path="force-model-prefix" type="boolean" default="false">
+  When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
+  
+  **Example:**
+  
+  With `force-model-prefix: false` (default):
+  ```yaml
+  gemini-api-key:
+    - api-key: "key1"
+      # No prefix - available for all models
+    - api-key: "key2"
+      prefix: "team-a"
+      # Only used for "team-a/model" OR unprefixed if key1 unavailable
+  ```
+  
+  With `force-model-prefix: true`:
+  ```yaml
+  gemini-api-key:
+    - api-key: "key1"
+      # No prefix - available for unprefixed models only
+    - api-key: "key2"
+      prefix: "team-a"
+      # Only used for "team-a/model" explicitly
+  ```
+</ParamField>
+
+## Complete Model Mapping Example
+
+```yaml
+# Force prefix routing
+force-model-prefix: false
+
+# Gemini Aliases
+gemini-api-key:
+  - api-key: "AIzaSy...01"
+    prefix: "prod"
+    models:
+      - name: "gemini-2.5-flash"
+        alias: "flash"
+      - name: "gemini-2.5-pro"
+        alias: "pro"
+
+# Claude Aliases
+claude-api-key:
+  - api-key: "sk-atSM..."
+    models:
+      - name: "claude-sonnet-4-5-20250929"
+        alias: "sonnet-latest"
+
+# OpenAI Compatibility with Model Pool
+openai-compatibility:
+  - name: "openrouter"
+    base-url: "https://openrouter.ai/api/v1"
+    api-key-entries:
+      - api-key: "sk-or-v1-..."
+    models:
+      # Model pool - round-robin
+      - name: "qwen3.5-plus"
+        alias: "smart"
+      - name: "glm-5"
+        alias: "smart"
+      - name: "kimi-k2.5"
+        alias: "smart"
+
+# Amp Mappings
+ampcode:
+  upstream-url: "https://ampcode.com"
+  model-mappings:
+    - from: "claude-opus-4-5-20251101"
+      to: "sonnet-latest"  # Use our local Claude alias
+    - from: "gemini-3-pro-preview"
+      to: "prod/pro"       # Use prefixed Gemini
+  force-model-mappings: false
+```
+
+## Best Practices
+
+<Tip>
+  **Alias Naming:**
+  - Use descriptive, memorable names
+  - Avoid version numbers in aliases (use `"sonnet-latest"` not `"sonnet-4.5"`)
+  - Keep aliases consistent across providers
+  - Document your alias conventions
+</Tip>
+
+<Warning>
+  **Model Pool Considerations:**
+  - Only pool models with similar capabilities
+  - Test all models in a pool for quality
+  - Monitor pool usage for uneven distribution
+  - Document pool composition for debugging
+</Warning>
+
+<Note>
+  **Prefix vs No Prefix:**
+  
+  Use prefixes when:
+  - Different teams need separate credentials
+  - You want to isolate usage/quotas
+  - Testing new providers alongside production
+  
+  Skip prefixes for:
+  - Single-team deployments
+  - Simplified client configuration
+  - Maximum credential pool availability
+</Note>
+
+## Troubleshooting
+
+### Alias Not Working
+
+1. Check `models[].name` matches upstream model exactly (case-sensitive)
+2. Verify client request includes correct prefix (if configured)
+3. Check for typos in `models[].alias`
+
+### Model Pool Not Round-Robining
+
+1. Verify all pool entries have identical `alias` values
+2. Check all upstream models are available
+3. Review routing strategy (`routing.strategy` in server config)
+
+### Amp Mapping Not Applied
+
+1. Check `force-model-mappings` setting
+2. Verify `from` field matches exact model name (case-sensitive)
+3. Ensure `to` model has available providers
+4. Check regex syntax if using `regex: true`

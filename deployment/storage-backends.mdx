@@ -1,0 +1,519 @@
+---
+title: Storage Backends
+description: Configure PostgreSQL, Git, and Object Storage backends for distributed deployments
+---
+
+CLI Proxy API supports multiple storage backends for configuration and authentication data, enabling distributed and cloud-native deployments.
+
+## Overview
+
+By default, CLI Proxy API stores configuration and OAuth tokens in local files. For production deployments, you can use:
+
+- **PostgreSQL** - Centralized database storage
+- **Git** - Version-controlled configuration with remote repository sync
+- **Object Storage** - S3-compatible object storage
+
+<Note>
+  Storage backends are mutually exclusive. If multiple backends are configured, PostgreSQL takes precedence, followed by Object Storage, then Git.
+</Note>
+
+## PostgreSQL Store
+
+Store configuration and authentication data in a PostgreSQL database.
+
+### Configuration
+
+Set environment variables:
+
+```bash .env
+PGSTORE_DSN=postgresql://user:password@localhost:5432/cliproxy
+PGSTORE_SCHEMA=public
+PGSTORE_LOCAL_PATH=/var/lib/cliproxy
+```
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|----------|
+| `PGSTORE_DSN` | PostgreSQL connection string | Yes | _(none)_ |
+| `PGSTORE_SCHEMA` | Database schema name | No | `public` |
+| `PGSTORE_LOCAL_PATH` | Local mirror directory | No | `./pgstore` |
+
+### Database Schema
+
+The PostgreSQL store automatically creates two tables:
+
+#### Config Table
+
+```sql
+CREATE TABLE IF NOT EXISTS config_store (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### Auth Table
+
+```sql
+CREATE TABLE IF NOT EXISTS auth_store (
+    id TEXT PRIMARY KEY,
+    content JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Docker Compose Example
+
+```yaml docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      PGSTORE_DSN: postgresql://cliproxy:secure_password@postgres:5432/cliproxy
+      PGSTORE_SCHEMA: public
+      PGSTORE_LOCAL_PATH: /data/pgstore
+    volumes:
+      - pgstore:/data/pgstore
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: cliproxy
+      POSTGRES_USER: cliproxy
+      POSTGRES_PASSWORD: secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cliproxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgstore:
+  postgres_data:
+```
+
+### Connection String Format
+
+```
+postgresql://[user[:password]@][host][:port][/dbname][?param1=value1&...]
+```
+
+Examples:
+
+```bash
+# Local PostgreSQL
+PGSTORE_DSN=postgresql://cliproxy:password@localhost:5432/cliproxy
+
+# With SSL
+PGSTORE_DSN=postgresql://user:pass@db.example.com:5432/cliproxy?sslmode=require
+
+# AWS RDS
+PGSTORE_DSN=postgresql://admin:password@cliproxy.abc123.us-east-1.rds.amazonaws.com:5432/cliproxy
+
+# Google Cloud SQL
+PGSTORE_DSN=postgresql://user:pass@/cliproxy?host=/cloudsql/project:region:instance
+```
+
+### How It Works
+
+The PostgreSQL store:
+
+1. **Initialization** (`cmd/server/main.go:243-266`):
+   - Connects to PostgreSQL using the provided DSN
+   - Creates schema and tables if they don't exist
+   - Bootstraps configuration from example or database
+
+2. **Mirroring** (`internal/store/postgresstore.go:146-158`):
+   - Syncs configuration from database to local workspace
+   - Mirrors auth files to local directory for file-based operations
+   - Maintains bidirectional sync between database and filesystem
+
+3. **Persistence** (`internal/store/postgresstore.go:188-260`):
+   - Saves auth metadata to local files
+   - Upserts records to database with timestamps
+   - Handles updates and deletions
+
+## Git Store
+
+Store configuration and authentication data in a Git repository with automatic sync.
+
+### Configuration
+
+Set environment variables:
+
+```bash .env
+GITSTORE_GIT_URL=https://github.com/your-org/cli-proxy-config.git
+GITSTORE_GIT_USERNAME=git-user
+GITSTORE_GIT_TOKEN=ghp_your_personal_access_token
+GITSTORE_LOCAL_PATH=/data/cliproxy/gitstore
+```
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|----------|
+| `GITSTORE_GIT_URL` | Git repository URL | Yes | _(none)_ |
+| `GITSTORE_GIT_USERNAME` | Git username | No | `git` |
+| `GITSTORE_GIT_TOKEN` | Personal access token or password | Yes | _(none)_ |
+| `GITSTORE_LOCAL_PATH` | Local clone directory | No | `./gitstore` |
+
+### Repository Structure
+
+```
+your-config-repo/
+├── config/
+│   └── config.yaml
+└── auths/
+    ├── gemini.json
+    ├── claude.json
+    └── codex.json
+```
+
+### Docker Compose Example
+
+```yaml docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      GITSTORE_GIT_URL: https://github.com/your-org/cli-proxy-config.git
+      GITSTORE_GIT_USERNAME: ${GIT_USERNAME}
+      GITSTORE_GIT_TOKEN: ${GIT_TOKEN}
+      GITSTORE_LOCAL_PATH: /data/gitstore
+    volumes:
+      - gitstore:/data/gitstore
+    restart: unless-stopped
+
+volumes:
+  gitstore:
+```
+
+### Git Authentication
+
+#### GitHub Personal Access Token
+
+1. Generate a token at https://github.com/settings/tokens
+2. Required scopes: `repo` (full control of private repositories)
+3. Use token as `GITSTORE_GIT_TOKEN`
+
+```bash
+GITSTORE_GIT_URL=https://github.com/your-org/cli-proxy-config.git
+GITSTORE_GIT_USERNAME=your-github-username
+GITSTORE_GIT_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+#### GitLab Personal Access Token
+
+1. Generate at Settings → Access Tokens
+2. Required scopes: `read_repository`, `write_repository`
+3. Use `oauth2` as username
+
+```bash
+GITSTORE_GIT_URL=https://gitlab.com/your-org/cli-proxy-config.git
+GITSTORE_GIT_USERNAME=oauth2
+GITSTORE_GIT_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+```
+
+#### Bitbucket App Password
+
+1. Generate at Account Settings → App passwords
+2. Required permissions: `repository:write`
+
+```bash
+GITSTORE_GIT_URL=https://bitbucket.org/your-workspace/cli-proxy-config.git
+GITSTORE_GIT_USERNAME=your-username
+GITSTORE_GIT_TOKEN=your-app-password
+```
+
+### How It Works
+
+The Git store:
+
+1. **Initialization** (`internal/store/gitstore.go:92-213`):
+   - Clones the repository if not present
+   - Pulls latest changes from remote
+   - Creates directory structure if empty
+
+2. **Auto-commit** (`internal/store/gitstore.go:556-628`):
+   - Commits changes to local repository
+   - Rewrites history as single commit (squash)
+   - Force pushes to remote
+
+3. **File Operations** (`internal/store/gitstore.go:216-296`):
+   - Saves auth files locally
+   - Stages and commits changes
+   - Pushes to remote repository
+
+<Warning>
+  The Git store uses force push (`--force`) to maintain a clean history. Do not manually edit the repository or use it for other purposes.
+</Warning>
+
+## Object Store
+
+Store configuration and authentication data in S3-compatible object storage.
+
+### Configuration
+
+Set environment variables:
+
+```bash .env
+OBJECTSTORE_ENDPOINT=https://s3.amazonaws.com
+OBJECTSTORE_BUCKET=cli-proxy-config
+OBJECTSTORE_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE
+OBJECTSTORE_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+OBJECTSTORE_LOCAL_PATH=/data/cliproxy/objectstore
+```
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|----------|
+| `OBJECTSTORE_ENDPOINT` | S3-compatible endpoint URL | Yes | _(none)_ |
+| `OBJECTSTORE_BUCKET` | Bucket name | Yes | _(none)_ |
+| `OBJECTSTORE_ACCESS_KEY` | Access key ID | Yes | _(none)_ |
+| `OBJECTSTORE_SECRET_KEY` | Secret access key | Yes | _(none)_ |
+| `OBJECTSTORE_LOCAL_PATH` | Local mirror directory | No | `./objectstore` |
+
+### Endpoint Format
+
+The endpoint supports both HTTP and HTTPS:
+
+```bash
+# HTTPS (default)
+OBJECTSTORE_ENDPOINT=https://s3.amazonaws.com
+
+# HTTP (for local development)
+OBJECTSTORE_ENDPOINT=http://localhost:9000
+
+# Without scheme (defaults to HTTPS)
+OBJECTSTORE_ENDPOINT=s3.amazonaws.com
+```
+
+The server automatically:
+- Parses the scheme to determine SSL usage
+- Uses path-style bucket access for compatibility
+- Handles endpoint URL parsing (`cmd/server/main.go:276-302`)
+
+### Provider Examples
+
+#### AWS S3
+
+```bash
+OBJECTSTORE_ENDPOINT=https://s3.amazonaws.com
+OBJECTSTORE_BUCKET=my-cli-proxy-config
+OBJECTSTORE_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE
+OBJECTSTORE_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+```
+
+Or use regional endpoint:
+
+```bash
+OBJECTSTORE_ENDPOINT=https://s3.us-west-2.amazonaws.com
+```
+
+#### MinIO
+
+```yaml docker-compose.yml
+services:
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api:latest
+    environment:
+      OBJECTSTORE_ENDPOINT: http://minio:9000
+      OBJECTSTORE_BUCKET: cli-proxy-config
+      OBJECTSTORE_ACCESS_KEY: minioadmin
+      OBJECTSTORE_SECRET_KEY: minioadmin
+      OBJECTSTORE_LOCAL_PATH: /data/objectstore
+    volumes:
+      - objectstore:/data/objectstore
+    depends_on:
+      - minio
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  objectstore:
+  minio_data:
+```
+
+#### Cloudflare R2
+
+```bash
+OBJECTSTORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+OBJECTSTORE_BUCKET=cli-proxy-config
+OBJECTSTORE_ACCESS_KEY=<r2-access-key-id>
+OBJECTSTORE_SECRET_KEY=<r2-secret-access-key>
+```
+
+#### DigitalOcean Spaces
+
+```bash
+OBJECTSTORE_ENDPOINT=https://nyc3.digitaloceanspaces.com
+OBJECTSTORE_BUCKET=cli-proxy-config
+OBJECTSTORE_ACCESS_KEY=<spaces-access-key>
+OBJECTSTORE_SECRET_KEY=<spaces-secret-key>
+```
+
+#### Google Cloud Storage (S3 Compatible)
+
+```bash
+OBJECTSTORE_ENDPOINT=https://storage.googleapis.com
+OBJECTSTORE_BUCKET=cli-proxy-config
+OBJECTSTORE_ACCESS_KEY=<hmac-access-id>
+OBJECTSTORE_SECRET_KEY=<hmac-secret>
+```
+
+### Object Structure
+
+Objects are stored with the following keys:
+
+```
+config/config.yaml          # Main configuration
+auths/gemini.json           # Auth files
+auths/claude.json
+auths/codex.json
+```
+
+### How It Works
+
+The object store:
+
+1. **Initialization** (`internal/store/objectstore.go:54-119`):
+   - Creates MinIO client with endpoint and credentials
+   - Ensures bucket exists (creates if needed)
+   - Syncs objects to local workspace
+
+2. **Mirroring** (`internal/store/objectstore.go:388-438`):
+   - Downloads all objects from bucket
+   - Writes to local directory structure
+   - Maintains local cache for file operations
+
+3. **Upload** (`internal/store/objectstore.go:440-460`):
+   - Reads local file changes
+   - Uploads to object storage with content type
+   - Handles deletions by removing objects
+
+## Storage Backend Priority
+
+When multiple backends are configured, the following priority applies (`cmd/server/main.go:237-455`):
+
+1. **PostgreSQL** - If `PGSTORE_DSN` is set
+2. **Object Storage** - If `OBJECTSTORE_ENDPOINT` is set and PostgreSQL is not configured
+3. **Git** - If `GITSTORE_GIT_URL` is set and neither PostgreSQL nor Object Storage are configured
+4. **Local Files** - Default if no backend is configured
+
+```go
+if value, ok := lookupEnv("PGSTORE_DSN", "pgstore_dsn"); ok {
+    usePostgresStore = true
+    pgStoreDSN = value
+}
+if usePostgresStore {
+    useGitStore = false  // Disable Git if Postgres is enabled
+}
+```
+
+## Comparison
+
+| Feature | PostgreSQL | Git | Object Storage | Local Files |
+|---------|------------|-----|----------------|-------------|
+| Distributed | ✅ | ✅ | ✅ | ❌ |
+| Version Control | ❌ | ✅ | ❌ | ❌ |
+| Transaction Support | ✅ | ❌ | ❌ | ❌ |
+| Scalability | High | Medium | High | Low |
+| Setup Complexity | Medium | Low | Low | None |
+| Cost | Medium | Free (GitHub) | Low-Medium | Free |
+| Best For | Production | Small teams | Cloud-native | Development |
+
+## Migration
+
+### From Local Files to PostgreSQL
+
+1. Start with local file configuration
+2. Set up PostgreSQL database
+3. Set `PGSTORE_DSN` environment variable
+4. Restart service - configuration is automatically migrated
+
+### From Local Files to Git
+
+1. Create a Git repository
+2. Set Git environment variables
+3. Restart service - files are committed and pushed
+
+### From Local Files to Object Storage
+
+1. Create an S3 bucket
+2. Set object storage environment variables
+3. Restart service - files are uploaded to bucket
+
+## Troubleshooting
+
+### PostgreSQL Connection Failed
+
+```bash
+# Test connection
+psql "postgresql://user:pass@host:5432/dbname"
+
+# Check logs
+docker compose logs cli-proxy-api | grep postgres
+```
+
+Common issues:
+- Wrong credentials in `PGSTORE_DSN`
+- PostgreSQL not accepting connections
+- Firewall blocking port 5432
+
+### Git Push Failed
+
+```bash
+# Check repository access
+git ls-remote https://username:token@github.com/org/repo.git
+
+# Verify token permissions
+# GitHub: repo scope required
+# GitLab: read_repository, write_repository
+```
+
+Common issues:
+- Invalid or expired token
+- Insufficient token permissions
+- Repository doesn't exist
+- Force push disabled on branch
+
+### Object Storage Upload Failed
+
+```bash
+# Test credentials with AWS CLI
+aws s3 ls s3://bucket-name --endpoint-url https://endpoint
+
+# Check MinIO logs
+docker compose logs minio
+```
+
+Common issues:
+- Wrong access key or secret key
+- Bucket doesn't exist
+- Insufficient permissions
+- Endpoint URL incorrect
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker">
+    Deploy using Docker and Docker Compose
+  </Card>
+  <Card title="Cloud Deployment" icon="cloud" href="/deployment/cloud">
+    Deploy in cloud environments with dynamic configuration
+  </Card>
+</CardGroup>
